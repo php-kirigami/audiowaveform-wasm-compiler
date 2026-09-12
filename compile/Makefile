@@ -12,6 +12,11 @@ LIBMAD_VERSION := $(call MATRIX_VERSION,libmad)
 LIBID3TAG_VERSION := $(call MATRIX_VERSION,libid3tag)
 LIBZ_VERSION := $(call MATRIX_VERSION,libz)
 LIBSNDFILE_VERSION := $(call MATRIX_VERSION,libsndfile)
+LIBOGG_VERSION := $(call MATRIX_VERSION,libogg)
+LIBFLAC_VERSION := $(call MATRIX_VERSION,libflac)
+LIBVORBIS_VERSION := $(call MATRIX_VERSION,libvorbis)
+LIBOPUS_VERSION := $(call MATRIX_VERSION,libopus)
+LIBFAAD2_VERSION := $(call MATRIX_VERSION,libfaad2)
 AUDIOWAVEFORM_VERSION := $(call MATRIX_VERSION,audiowaveform)
 
 # See php-wasm-compiler's Makefile for why this marker-file pattern matters
@@ -51,19 +56,58 @@ libid3tag/dist/root/lib/lib/libid3tag.a: base-image libz
 	CID=$$(docker create kirigami-audiowaveform-wasm:libid3tag) && docker cp $$CID:/root/lib/lib ./libid3tag/dist/root/lib && docker rm $$CID
 	CID=$$(docker create kirigami-audiowaveform-wasm:libid3tag) && docker cp $$CID:/root/lib/include ./libid3tag/dist/root/lib && docker rm $$CID
 
-# WAV/AIFF/RAW only (matrix.json's libsndfile note — FLAC/Ogg/Opus need
-# extra vendored libs, deferred).
+libogg: libogg/dist/root/lib/lib/libogg.a
+libogg/dist/root/lib/lib/libogg.a: base-image
+	docker build -f ./libogg/Dockerfile -t kirigami-audiowaveform-wasm:libogg . --build-arg LIBOGG_VERSION=$(LIBOGG_VERSION)
+	mkdir -p ./libogg/dist/root/lib
+	CID=$$(docker create kirigami-audiowaveform-wasm:libogg) && docker cp $$CID:/root/lib/lib ./libogg/dist/root/lib && docker rm $$CID
+	CID=$$(docker create kirigami-audiowaveform-wasm:libogg) && docker cp $$CID:/root/lib/include ./libogg/dist/root/lib && docker rm $$CID
+
+# WITH_OGG=OFF — native FLAC only, no libogg dependency (compile/libflac/Dockerfile).
+libflac: libflac/dist/root/lib/lib/libFLAC.a
+libflac/dist/root/lib/lib/libFLAC.a: base-image
+	docker build -f ./libflac/Dockerfile -t kirigami-audiowaveform-wasm:libflac . --build-arg LIBFLAC_VERSION=$(LIBFLAC_VERSION)
+	mkdir -p ./libflac/dist/root/lib
+	CID=$$(docker create kirigami-audiowaveform-wasm:libflac) && docker cp $$CID:/root/lib/lib ./libflac/dist/root/lib && docker rm $$CID
+	CID=$$(docker create kirigami-audiowaveform-wasm:libflac) && docker cp $$CID:/root/lib/include ./libflac/dist/root/lib && docker rm $$CID
+
+libvorbis: libvorbis/dist/root/lib/lib/libvorbis.a
+libvorbis/dist/root/lib/lib/libvorbis.a: base-image libogg
+	docker build -f ./libvorbis/Dockerfile -t kirigami-audiowaveform-wasm:libvorbis . --build-arg LIBVORBIS_VERSION=$(LIBVORBIS_VERSION)
+	mkdir -p ./libvorbis/dist/root/lib
+	CID=$$(docker create kirigami-audiowaveform-wasm:libvorbis) && docker cp $$CID:/root/lib/lib ./libvorbis/dist/root/lib && docker rm $$CID
+	CID=$$(docker create kirigami-audiowaveform-wasm:libvorbis) && docker cp $$CID:/root/lib/include ./libvorbis/dist/root/lib && docker rm $$CID
+
+libopus: libopus/dist/root/lib/lib/libopus.a
+libopus/dist/root/lib/lib/libopus.a: base-image
+	docker build -f ./libopus/Dockerfile -t kirigami-audiowaveform-wasm:libopus . --build-arg LIBOPUS_VERSION=$(LIBOPUS_VERSION)
+	mkdir -p ./libopus/dist/root/lib
+	CID=$$(docker create kirigami-audiowaveform-wasm:libopus) && docker cp $$CID:/root/lib/lib ./libopus/dist/root/lib && docker rm $$CID
+	CID=$$(docker create kirigami-audiowaveform-wasm:libopus) && docker cp $$CID:/root/lib/include ./libopus/dist/root/lib && docker rm $$CID
+
+# WAV/AIFF/RAW/FLAC/Ogg-Vorbis/Ogg-Opus (matrix.json's libsndfile note).
 libsndfile: libsndfile/dist/root/lib/lib/libsndfile.a
-libsndfile/dist/root/lib/lib/libsndfile.a: base-image
+libsndfile/dist/root/lib/lib/libsndfile.a: base-image libogg libflac libvorbis libopus
 	docker build -f ./libsndfile/Dockerfile -t kirigami-audiowaveform-wasm:libsndfile . --build-arg LIBSNDFILE_VERSION=$(LIBSNDFILE_VERSION)
 	mkdir -p ./libsndfile/dist/root/lib
 	CID=$$(docker create kirigami-audiowaveform-wasm:libsndfile) && docker cp $$CID:/root/lib/lib ./libsndfile/dist/root/lib && docker rm $$CID
 	CID=$$(docker create kirigami-audiowaveform-wasm:libsndfile) && docker cp $$CID:/root/lib/include ./libsndfile/dist/root/lib && docker rm $$CID
 
+# M4A/AAC (CLAUDE.md decision 9's correction #2). Only the core decoder
+# library is built here; compile/audiowaveform/Dockerfile pulls the
+# frontend/mp4read.c demuxer files from this same image's source tree.
+libfaad2: libfaad2/dist/root/lib/lib/libfaad.a
+libfaad2/dist/root/lib/lib/libfaad.a: base-image
+	docker build -f ./libfaad2/Dockerfile -t kirigami-audiowaveform-wasm:libfaad2 . --build-arg LIBFAAD2_VERSION=$(LIBFAAD2_VERSION)
+	mkdir -p ./libfaad2/dist/root/lib
+	CID=$$(docker create kirigami-audiowaveform-wasm:libfaad2) && docker cp $$CID:/root/lib/lib ./libfaad2/dist/root/lib && docker rm $$CID
+	CID=$$(docker create kirigami-audiowaveform-wasm:libfaad2) && docker cp $$CID:/root/lib/include ./libfaad2/dist/root/lib && docker rm $$CID
+
 # Final module: audiowaveform's extracted core (CLAUDE.md decision 8) +
 # our own Embind wrapper (src/binding.cpp), linked against
-# libmad/libid3tag/libsndfile.
-audiowaveform-wasm: libmad libid3tag libsndfile
+# libmad/libid3tag/libsndfile (which itself bundles libogg/libflac/
+# libvorbis/libopus)/libfaad2.
+audiowaveform-wasm: libmad libid3tag libsndfile libfaad2
 	# Build context is the repo root (..), not compile/ — same convention
 	# php-wasm-compiler's build.js uses for its PHP Dockerfile — so this
 	# Dockerfile can COPY both compile/src/binding.cpp and the repo-root
@@ -75,6 +119,6 @@ audiowaveform-wasm: libmad libid3tag libsndfile
 all: audiowaveform-wasm
 
 clean:
-	rm -rf libmad/dist libid3tag/dist libz/dist libsndfile/dist
+	rm -rf libmad/dist libid3tag/dist libz/dist libsndfile/dist libogg/dist libflac/dist libvorbis/dist libopus/dist libfaad2/dist
 
 .PHONY: base-image clean-base-image all clean

@@ -24,7 +24,7 @@ Builds a waveform-peak-extraction module for the **[Kirigami](https://github.com
 - ✅ **Node.js** only, no browser target
 - ✅ One monolithic wasm module — no JSPI, no Asyncify, no dylink side-modules (peak extraction is synchronous, CPU-bound work)
 - ✅ Buffer in, JS object out — output shaped like `audiowaveform`'s own documented peaks format, so [`waveform-data.js`](https://github.com/bbc/waveform-data.js) can consume it directly
-- ✅ MP3 (`libmad` + `libid3tag`) and WAV/AIFF/RAW (`libsndfile`) today; FLAC/Ogg/Opus (needs `libFLAC`/`libogg`/`libvorbis`/`libopus`) and M4A/AAC (`libfaad2` — not `libfdk-aac`, which is very likely GPL-incompatible) planned
+- ✅ MP3 (`libmad` + `libid3tag`), WAV/AIFF/RAW/FLAC/Ogg-Vorbis/Ogg-Opus (`libsndfile` + `libFLAC`/`libogg`/`libvorbis`/`libopus`), and M4A/AAC (`libfaad2` — not `libfdk-aac`, which is very likely GPL-incompatible)
 - ❌ No CLI, no image rendering — that's `audiowaveform`'s own job, and JS's job on the consuming side
 
 See [`CLAUDE.md`](CLAUDE.md) for the full architecture and decision history.
@@ -80,9 +80,10 @@ const peaks = module.extractAudioPeaks(mp3Bytes, 512);
 // { version: 2, channels: 2, sample_rate: 44100, samples_per_pixel: 512,
 //   bits: 16, length: 1234, data: [...] }
 
-// Same function for WAV/AIFF/RAW — format is auto-detected by sniffing
-// real container magic bytes (RIFF/FORM -> libsndfile; fLaC/OggS/ftyp ->
-// not supported yet, returns null; anything else -> MP3).
+// Same function for WAV/AIFF/FLAC/Ogg-Vorbis/Ogg-Opus/M4A-AAC — format is
+// auto-detected by sniffing real container magic bytes (RIFF/FORM/fLaC/OggS
+// -> libsndfile; ....ftyp -> M4aAudioFileReader/libfaad2; anything else ->
+// MP3).
 const wavPeaks = module.extractAudioPeaks(fs.readFileSync('song.wav'), 512);
 
 // ID3 tag metadata and embedded cover art (MP3 only):
@@ -108,10 +109,10 @@ Tested 2026-09-12 against real audio — a FLAC album re-encoded to each format 
 | WAV (24-bit PCM) | ✅ Works | |
 | WAV (32-bit float) | ✅ Works | |
 | AIFF | ✅ Works | |
-| FLAC | ❌ Not yet | `libsndfile` built with `ENABLE_EXTERNAL_LIBS=OFF` — needs `libFLAC` vendored |
-| Ogg Vorbis | ❌ Not yet | same — needs `libogg` + `libvorbis` |
-| Opus | ❌ Not yet | same — needs `libogg` + `libopus` |
-| M4A/AAC | ❌ Not yet | needs a new decoder path entirely, planned via `libfaad2` (not `libfdk-aac` — GPL-incompatible license) — see `CLAUDE.md` |
+| FLAC | ✅ Works | `libsndfile` + `libFLAC`, verified against the full real album in `assets/`, not just a short clip |
+| Ogg Vorbis | ✅ Works | `libsndfile` + `libogg`/`libvorbis`. Known minor limitation: an Ogg file with a second, non-audio logical bitstream muxed in (e.g. an attached-picture stream some encoders produce) isn't recognised — plain audio-only Ogg Vorbis (the standard shape) works |
+| Opus | ✅ Works | `libsndfile` + `libogg`/`libopus` |
+| M4A/AAC | ✅ Works | `libfaad2` (not `libfdk-aac` — GPL-incompatible license) + its own `mp4read.c` MP4 demuxer, via this project's own `M4aAudioFileReader` (audiowaveform has no AAC reader of its own) — see `CLAUDE.md` |
 
 `extractAudioPeaks()` returns `null` for unsupported formats — never crashes.
 

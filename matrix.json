@@ -41,9 +41,54 @@
 			"sourceType": "github-release",
 			"repo": "libsndfile/libsndfile",
 			"sourceTemplate": "https://github.com/libsndfile/libsndfile/releases/download/{version}/libsndfile-{version}.tar.xz",
-			"note": "WAV/AIFF/RAW only in this project's build (ENABLE_EXTERNAL_LIBS=OFF, ENABLE_MPEG=OFF — see compile/libsndfile/Dockerfile). FLAC/Ogg-Vorbis/Opus support would need libFLAC/libogg/libvorbis/libopus vendored too, deferred (CLAUDE.md decision 9's correction).",
+			"note": "WAV/AIFF/RAW/FLAC/Ogg-Vorbis/Ogg-Opus (ENABLE_EXTERNAL_LIBS=ON as of 2026-09-12, ENABLE_MPEG=OFF — see compile/libsndfile/Dockerfile), built against the libogg/libflac/libvorbis/libopus entries below.",
 			"versions": [
 				"1.2.2"
+			]
+		},
+		"libogg": {
+			"sourceType": "github-release",
+			"repo": "xiph/ogg",
+			"sourceTemplate": "https://github.com/xiph/ogg/releases/download/v{version}/libogg-{version}.tar.gz",
+			"note": "Ogg container bitstream layer, needed by libvorbis and by libsndfile's own Ogg-Opus demuxing. Real GitHub tags are \"v{version}\" (the sourceTemplate above adds the \"v\" itself) — matrix.json stores the bare version, same convention update-lib-versions.mjs's normalizeVersion() already produces.",
+			"versions": [
+				"1.3.6"
+			]
+		},
+		"libflac": {
+			"sourceType": "github-release",
+			"repo": "xiph/flac",
+			"sourceTemplate": "https://github.com/xiph/flac/releases/download/{version}/flac-{version}.tar.xz",
+			"note": "Native FLAC decoding for libsndfile (WITH_OGG=OFF — no Ogg FLAC support needed). Unlike libogg/libvorbis/libopus, xiph/flac's tags have no \"v\" prefix.",
+			"versions": [
+				"1.5.0"
+			]
+		},
+		"libvorbis": {
+			"sourceType": "github-release",
+			"repo": "xiph/vorbis",
+			"sourceTemplate": "https://github.com/xiph/vorbis/releases/download/v{version}/libvorbis-{version}.tar.gz",
+			"note": "Ogg Vorbis decoding for libsndfile. Depends on libogg.",
+			"versions": [
+				"1.3.7"
+			]
+		},
+		"libopus": {
+			"sourceType": "github-release",
+			"repo": "xiph/opus",
+			"sourceTemplate": "https://github.com/xiph/opus/releases/download/v{version}/opus-{version}.tar.gz",
+			"note": "Ogg Opus decoding for libsndfile. Standalone at build time (no libogg dependency).",
+			"versions": [
+				"1.5.2"
+			]
+		},
+		"libfaad2": {
+			"sourceType": "github-release",
+			"repo": "knik0/faad2",
+			"sourceTemplate": "https://github.com/knik0/faad2/archive/refs/tags/{version}.tar.gz",
+			"note": "M4A/AAC decoding (CLAUDE.md decision 9's correction #2 — chosen over libfdk-aac, which is very likely GPL-incompatible). Only the core libfaad decoder library is built by compile/libfaad2/Dockerfile; the frontend's mp4read.c/unicode_support.c demuxer files are pulled from this same build stage's source tree directly into compile/audiowaveform/Dockerfile's build, not built via faad2's own frontend build system.",
+			"versions": [
+				"2.11.3"
 			]
 		}
 	}

@@ -16,6 +16,7 @@
 #include "AudioFileReader.h"
 #include "Mp3AudioFileReader.h"
 #include "SndFileAudioFileReader.h"
+#include "M4aAudioFileReader.h"
 #include "WaveformGenerator.h"
 #include "WaveformBuffer.h"
 #include "Streams.h"
@@ -182,26 +183,29 @@ val extractPeaks(AudioFileReader& reader, const std::string& bytes, int samplesP
 // garbage points, not exactly zero. Real magic bytes are cheap, exact,
 // and don't have this false-positive problem.
 enum class DetectedFormat {
-    RiffOrAiff, // WAV ("RIFF...WAVE") or AIFF ("FORM...AIFF"/"AIFC") — libsndfile
-    KnownUnsupported, // FLAC ("fLaC"), Ogg (Vorbis/Opus, "OggS"), MP4/M4A ("....ftyp") — decision 9/13
+    // WAV ("RIFF...WAVE"), AIFF ("FORM...AIFF"/"AIFC"), FLAC ("fLaC"), or
+    // Ogg (Vorbis/Opus, "OggS") — all handled by SndFileAudioFileReader
+    // (libsndfile auto-detects the specific format from the header itself,
+    // same as it already did for WAV vs. AIFF). FLAC/Ogg support requires
+    // libsndfile built with ENABLE_EXTERNAL_LIBS=ON (compile/libsndfile/
+    // Dockerfile, libFLAC/libogg/libvorbis/libopus vendored) — see CLAUDE.md
+    // decision 9's correction.
+    Sndfile,
+    Mpeg4, // MP4/M4A ("....ftyp") — M4aAudioFileReader (CLAUDE.md decision 9's correction #2)
     Unknown // ID3-tagged or bare-sync MP3, or anything else — try Mp3AudioFileReader
 };
 
 DetectedFormat detectFormat(const std::string& bytes) {
     if (bytes.size() >= 4 &&
-        (bytes.compare(0, 4, "RIFF") == 0 || bytes.compare(0, 4, "FORM") == 0)) {
-        return DetectedFormat::RiffOrAiff;
-    }
-
-    if (bytes.size() >= 4 &&
-        (bytes.compare(0, 4, "fLaC") == 0 || bytes.compare(0, 4, "OggS") == 0)) {
-        return DetectedFormat::KnownUnsupported;
+        (bytes.compare(0, 4, "RIFF") == 0 || bytes.compare(0, 4, "FORM") == 0 ||
+         bytes.compare(0, 4, "fLaC") == 0 || bytes.compare(0, 4, "OggS") == 0)) {
+        return DetectedFormat::Sndfile;
     }
 
     // MP4-family containers (M4A/AAC included) store their box type at
     // offset 4, not 0 — the first 4 bytes are the box size, which varies.
     if (bytes.size() >= 8 && bytes.compare(4, 4, "ftyp") == 0) {
-        return DetectedFormat::KnownUnsupported;
+        return DetectedFormat::Mpeg4;
     }
 
     return DetectedFormat::Unknown;
@@ -224,13 +228,15 @@ DetectedFormat detectFormat(const std::string& bytes) {
 // `null` if the format isn't supported or the file failed to decode.
 val extractAudioPeaks(const std::string& bytes, int samplesPerPixel) {
     switch (detectFormat(bytes)) {
-        case DetectedFormat::RiffOrAiff: {
+        case DetectedFormat::Sndfile: {
             SndFileAudioFileReader reader;
             return extractPeaks(reader, bytes, samplesPerPixel);
         }
 
-        case DetectedFormat::KnownUnsupported:
-            return val::null();
+        case DetectedFormat::Mpeg4: {
+            M4aAudioFileReader reader;
+            return extractPeaks(reader, bytes, samplesPerPixel);
+        }
 
         case DetectedFormat::Unknown:
         default: {

@@ -623,19 +623,137 @@ Decisions settled with the user (2026-09-12):
       decided" item that had been open since this repo's very first
       scaffolding commit.
 
+18. **FLAC/Ogg Vorbis/Opus and M4A/AAC all implemented, built, and verified
+    working (2026-09-12) — resolves the format matrix's four remaining
+    `❌ Not yet` rows (decisions 9/13/16).** Two independent pieces of work,
+    both fully real (built + runtime-tested against real audio), not just
+    written:
+
+    - **FLAC/Ogg Vorbis/Opus**, via `libsndfile` rebuilt with
+      `ENABLE_EXTERNAL_LIBS=ON` against four newly-vendored libs
+      (`compile/libogg`, `compile/libflac` — `WITH_OGG=OFF`, native FLAC
+      only, no Ogg-FLAC — `compile/libvorbis`, `compile/libopus`), reusing
+      the existing `SndFileAudioFileReader` — no new C++ needed here.
+      Licenses verified directly (not assumed), same discipline as
+      `libfaad2`'s research in decision 9's correction #2: `xiph/ogg`,
+      `xiph/flac`, `xiph/vorbis`, `xiph/opus` all ship the same Xiph
+      3-clause-BSD-style `COPYING`, permissive and GPL-3.0-or-later
+      compatible; Opus's own `COPYING` additionally documents its
+      royalty-free IETF patent licenses (Xiph/Microsoft/Broadcom) — no
+      patent ambiguity to carry forward the way AAC has.
+      - **Real build bug #1**: `libopus`'s `configure` unconditionally
+        probes x86 SSE/SSE2/SSE4.1/AVX2 intrinsics regardless of `--host`,
+        and fails outright under `emconfigure` (`no supported Get CPU Info
+        method`) since none of those compile under `emcc`/clang for
+        wasm32 — it does not gracefully fall through to a portable path on
+        its own. Fixed with the three flags `configure --help` itself
+        documents for this: `--disable-rtcd --disable-intrinsics
+        --disable-asm`.
+      - **Real build/runtime bug #2, the significant one**: with
+        `ENABLE_EXTERNAL_LIBS=ON` alone, every build step (each lib, then
+        `libsndfile`, then the final `audiowaveform-wasm` link) succeeded
+        with zero errors — but real FLAC/Ogg files still failed at
+        *runtime* with libsndfile's own "File contains data in an
+        unimplemented format." Root-caused with a temporary debug build
+        (`binding.cpp`'s `output_stream`/`error_stream` pointed at
+        `std::cerr` instead of the null stream) plus inspecting the built
+        image's own `CMakeCache.txt`/`config.h` directly: `pkg_check_modules`
+        correctly found `flac`/`ogg`/`vorbis`/`opus` (`PC_FLAC_FOUND=1`
+        etc. — the base image's `PKG_CONFIG_PATH` works fine), but the
+        subsequent `find_library`/`find_path` calls in libsndfile's own
+        `cmake/FindFLAC.cmake` etc. still came back `NOTFOUND`, because
+        Emscripten's own toolchain file sets
+        `CMAKE_FIND_ROOT_PATH_MODE_LIBRARY`/`INCLUDE=ONLY` — which
+        restricts `find_library`/`find_path`, *even calls given explicit
+        HINTS from a successful pkg-config lookup*, to searching only
+        inside `CMAKE_FIND_ROOT_PATH` (the Emscripten sysroot), not
+        `/root/lib` where every vendored lib in this project actually
+        lives. Net effect: `config.h`'s `HAVE_EXTERNAL_XIPH_LIBS` silently
+        resolved to `0` (libsndfile's own CMakeLists.txt has a quiet
+        fallback: `if (ENABLE_EXTERNAL_LIBS AND NOT (Vorbis_FOUND OR
+        FLAC_FOUND OR OPUS_FOUND)) set (ENABLE_EXTERNAL_LIBS OFF)`) even
+        though `flac.c`/`ogg_vorbis.c`/`ogg_opus.c` still compiled cleanly
+        as inert stubs — which is exactly why the *build itself* looked
+        completely fine. Fixed with the standard Emscripten-documented
+        idiom for this exact situation: `-DCMAKE_FIND_ROOT_PATH=/root/lib`
+        added to `compile/libsndfile/Dockerfile`'s `emcmake cmake`
+        invocation — passed as a cache variable, Emscripten's own
+        toolchain file's `list(APPEND CMAKE_FIND_ROOT_PATH
+        "${EMSCRIPTEN_SYSROOT}")` appends the sysroot onto it rather than
+        replacing it, so both paths get searched. Verified fixed for real:
+        `FLAC_LIBRARY`/`OGG_LIBRARY`/`OPUS_LIBRARY` all resolved to their
+        real `/root/lib/lib/*.a` paths and `HAVE_EXTERNAL_XIPH_LIBS` became
+        `1` in the rebuilt `config.h`.
+      - `detectFormat()` (`compile/src/binding.cpp`) widened: the `fLaC`/
+        `OggS` magic-byte cases, previously `KnownUnsupported`, now route
+        to the same `SndFileAudioFileReader` path as RIFF/AIFF (the enum
+        case itself renamed `RiffOrAiff` → `Sndfile` to match).
+      - **Real, minor limitation found during testing, not a build bug**:
+        the first Ogg Vorbis test file (`ffmpeg -i song.flac -c:a libvorbis
+        out.ogg`, no explicit `-map`) still failed — root-caused to
+        `ffmpeg` muxing the source FLAC's attached cover-art picture as a
+        *second, non-audio Ogg logical bitstream* (confirmed via
+        `ffprobe`: the audio track ends up as `Stream #0:1`, not `#0:0`),
+        which libsndfile's Ogg demuxer doesn't recognise as a valid single
+        stream and reports as unimplemented. An audio-only Ogg Vorbis file
+        (`ffmpeg -map 0:a ...` — the standard shape essentially all real
+        Ogg Vorbis files and encoders produce; embedding cover art as a
+        second logical bitstream this way is not how Ogg tooling normally
+        stores artwork) decodes correctly. Documented in `README.md`'s
+        format table rather than chased further, same "empirically test,
+        document real gaps honestly" approach as decision 16's numeric
+        `TCON` genre-code gap.
+
+    - **M4A/AAC**, via a genuinely new `M4aAudioFileReader.h`/`.cpp`
+      (`compile/src/`) — audiowaveform has no AAC reader to extract, so
+      this is this project's own code, modeled directly on the real
+      `Mp3AudioFileReader.cpp` pipeline (fetched from GitHub while
+      designing it) implementing the same `AudioFileReader` interface.
+      Uses `libfaad2`'s (`knik0/faad2`, actively maintained fork)
+      `NeAACDec*` decoder API plus its own `frontend/mp4read.c` MP4 box
+      demuxer (both licenses re-confirmed from decision 9's correction #2:
+      GPL-2.0-or-later core decoder, GPL-3.0-or-later demuxer — both
+      compatible with this project's own GPL-3.0-or-later).
+      `compile/libfaad2/Dockerfile` builds only the core `faad` library
+      (`-DFAAD_BUILD_CLI=OFF`, skipping the CLI frontend's own extra
+      dependencies entirely); `mp4read.c`/`mp4read.h`/`unicode_support.c`/
+      `unicode_support.h` are pulled directly from that build stage's
+      still-present source tree into `compile/audiowaveform/Dockerfile`
+      (no second download), compiled as real C via the same explicit
+      `emcc -c` step already used for `bstdfile.c`/`pdjson.c` (`mp4read.h`
+      doesn't self-wrap in `extern "C"` the way `BStdFile.h`/`pdjson.h` do,
+      so `M4aAudioFileReader.cpp` wraps its own `#include "mp4read.h"`
+      instead). **Worked correctly on the very first real build and the
+      very first real test run — no debugging needed**, unlike the
+      libsndfile-based formats above.
+    - **Verification, not just "it built"**: the full real FLAC album in
+      `assets/` (all 6 tracks, not just a short synthetic clip) decodes
+      correctly; MP3 ID3 tag/cover-art extraction re-tested and confirmed
+      unaffected (regression check). `node-builds/audiowaveform.wasm` grew
+      from ~640KB to ~980KB with all five new codec libraries linked in.
+    - `matrix.json`/`compile/Makefile` gained five new entries
+      (`libogg`/`libflac`/`libvorbis`/`libopus`/`libfaad2`), all
+      `github-release`-tracked like the rest — noted in `matrix.json`
+      itself that `xiph/ogg`/`xiph/vorbis`/`xiph/opus`'s real GitHub tags
+      carry a `v` prefix (`v1.3.6` etc.) that `update-lib-versions.mjs`'s
+      existing `normalizeVersion()` already strips before storing, so each
+      Dockerfile's own `wget` URL adds the `v` back rather than storing it
+      in the matrix (`xiph/flac`'s tags have no such prefix).
+
 ## Current status
 
 **Builds, runs, and is published (2026-09-12).** `make audiowaveform-wasm`
-produces a real, working `node-builds/audiowaveform.wasm` (~640KB) +
+produces a real, working `node-builds/audiowaveform.wasm` (~980KB) +
 `audiowaveform.js` (a genuine ES module — `-s EXPORT_ES6=1`, decision 17),
 exporting `extractAudioPeaks(bytes, samplesPerPixel)`,
 `getId3Tags(mp3Bytes)`, and `getId3CoverArt(mp3Bytes)`. All three are
-extensively runtime-tested (decision 16), not just built: the format
-matrix (MP3/WAV-16/24/float/AIFF pass, FLAC/Ogg/Opus/M4A cleanly `null`),
-25 real tagged MP3s from the user's own library (peaks + tags + cover
-art, 0 failures/crashes), and a deliberately adversarial ID3 batch
-(ID3v2.3, ID3v2.4, ID3v1-only, unicode/emoji/Cyrillic, long strings,
-numeric genre codes). This repo is pushed to
+extensively runtime-tested (decisions 16 and 18), not just built: the full
+format matrix now passes for real (MP3/WAV-16/24/float/AIFF/FLAC/Ogg-Vorbis/
+Ogg-Opus/M4A-AAC all produce real peaks — decision 18), 25 real tagged MP3s
+from the user's own library (peaks + tags + cover art, 0 failures/crashes),
+and a deliberately adversarial ID3 batch (ID3v2.3, ID3v2.4, ID3v1-only,
+unicode/emoji/Cyrillic, long strings, numeric genre codes). This repo is
+pushed to
 `https://github.com/php-kirigami/audiowaveform-wasm-compiler`; the
 **published npm package it feeds, `@kirigami/audiowaveform-wasm@1.0.0`,
 lives in a different repo** (`kirigami/packages/audiowaveform-wasm/` —
@@ -659,14 +777,8 @@ produces the raw compiled artifacts, same division of responsibility as
 - ~~Track dependency + `audiowaveform` versions like `php-wasm-compiler`~~
   — done, see decision 14 (`matrix.json`, `matrix-version.mjs`,
   `update-lib-versions.mjs`).
-- M4A/AAC support (decision 9) — still deferred to v2. Revised plan
-  (decision 9's correction #2): `libfaad2` + its own bundled `mp4read.c`
-  demuxer (both GPL-2/3-or-later, unlike the originally-considered
-  `libfdk-aac` which is very likely GPL-incompatible). No
-  `compile/libfaad2/Dockerfile` written yet. Real magic-byte detection for
-  it (`ftyp` box) is already in place in `detectFormat()` (decision 16),
-  currently just returning `null` — wiring in a real decoder later is
-  additive, not a redesign.
+- ~~M4A/AAC support~~ — done, see decision 18 (`libfaad2` + `mp4read.c`,
+  via the new `M4aAudioFileReader`).
 - ~~Double-check `pdjson`'s license~~ — confirmed Unlicense (public domain,
   a real `UNLICENSE` file ships in `audiowaveform`'s `src/pdjson/`),
   GPL-3.0-compatible, no concern.
@@ -699,6 +811,21 @@ produces the raw compiled artifacts, same division of responsibility as
   Makefile is invoked directly (`make audiowaveform-wasm`) rather than
   through a Node CLI wrapper. Revisit once/if the project's scope (M4A,
   more formats) grows enough to justify one.
-- ~~`libsndfile` not wired in~~ — done, see decision 13 (WAV/AIFF/RAW
-  only; FLAC/Ogg/Opus still need `libFLAC`/`libogg`/`libvorbis`/`libopus`
-  vendored, per decision 9's correction).
+- ~~`libsndfile` not wired in~~ — done, see decision 13 (WAV/AIFF/RAW) and
+  decision 18 (FLAC/Ogg-Vorbis/Ogg-Opus, `libFLAC`/`libogg`/`libvorbis`/
+  `libopus` now vendored and wired in).
+
+**Newly opened by decision 18's work, not yet resolved:**
+
+- WebM audio (Opus or Vorbis inside a Matroska/WebM container, not Ogg) —
+  requested by the user right after decision 18 landed. Not yet
+  researched: this needs a Matroska/WebM demuxer (`libsndfile` doesn't
+  read Matroska at all), most likely a small, permissively-licensed one in
+  the spirit of this project's `mp4read.c` choice for M4A rather than
+  vendoring all of `libwebm`/FFmpeg — the audio codecs themselves (Opus,
+  Vorbis) are already vendored as of decision 18, so this should only need
+  a demuxer, not new codec work. No Dockerfile or design written yet.
+- Ogg Vorbis's "second, non-audio logical bitstream" limitation (decision
+  18) — not planned to be fixed, just documented; revisit only if it turns
+  out to matter for real files the Kirigami player actually needs to
+  handle.

@@ -9,12 +9,27 @@ ARG AUDIOWAVEFORM_VERSION
 COPY --from=kirigami-audiowaveform-wasm:libmad /root/lib /root/lib
 COPY --from=kirigami-audiowaveform-wasm:libid3tag /root/lib /root/lib
 COPY --from=kirigami-audiowaveform-wasm:libsndfile /root/lib /root/lib
+COPY --from=kirigami-audiowaveform-wasm:libfaad2 /root/lib /root/lib
 
 RUN wget "https://github.com/bbc/audiowaveform/archive/refs/tags/$AUDIOWAVEFORM_VERSION.tar.gz" -O audiowaveform.tar.gz && \
     tar xf audiowaveform.tar.gz && \
     mv audiowaveform-$AUDIOWAVEFORM_VERSION /root/audiowaveform
 
 COPY ./compile/src/binding.cpp /root/audiowaveform/src/binding.cpp
+COPY ./compile/src/M4aAudioFileReader.h ./compile/src/M4aAudioFileReader.cpp /root/audiowaveform/src/
+
+# mp4read.c/.h + unicode_support.c/.h: libfaad2's own frontend MP4 demuxer
+# (CLAUDE.md decision 9's correction #2) — not part of the installed
+# libfaad.a, pulled directly from the libfaad2 build stage's source tree
+# (which still has the full checkout at /root/faad2) rather than downloading
+# a second time. Not audiowaveform's code either, same "vendor the specific
+# files actually needed" approach as bstdfile.c/pdjson.c below.
+COPY --from=kirigami-audiowaveform-wasm:libfaad2 \
+    /root/faad2/frontend/mp4read.c \
+    /root/faad2/frontend/mp4read.h \
+    /root/faad2/frontend/unicode_support.c \
+    /root/faad2/frontend/unicode_support.h \
+    /root/audiowaveform/src/faad2-frontend/
 
 # Drops MathUtil.cpp's parseNumber() (CLI-only, the sole reason that file
 # pulled in boost::regex — a compiled Boost component this project has no
@@ -57,11 +72,21 @@ WORKDIR /root/audiowaveform
 # about which flags apply to which file.
 RUN mkdir -p /root/out
 
+# mp4read.c/unicode_support.c get the same "compile as real C, not C++"
+# treatment as bstdfile.c/pdjson.c above, for the same reason: mp4read.h
+# doesn't self-wrap in extern "C" the way BStdFile.h/pdjson.h do, so
+# M4aAudioFileReader.cpp wraps its own #include "mp4read.h" in extern "C"
+# instead (see that file) — but the symbols mp4read.o itself exports still
+# need to be real, unmangled C linkage to match that wrapped declaration.
 RUN source /root/emsdk/emsdk_env.sh && \
     emcc -O2 -I src -I /root/lib/include -idirafter /usr/include \
         -c src/madlld-1.1p1/bstdfile.c -o /root/out/bstdfile.o && \
     emcc -O2 -I src -I /root/lib/include -idirafter /usr/include \
-        -c src/pdjson/pdjson.c -o /root/out/pdjson.o
+        -c src/pdjson/pdjson.c -o /root/out/pdjson.o && \
+    emcc -O2 -I src/faad2-frontend -I /root/lib/include -idirafter /usr/include \
+        -c src/faad2-frontend/mp4read.c -o /root/out/mp4read.o && \
+    emcc -O2 -I src/faad2-frontend -I /root/lib/include -idirafter /usr/include \
+        -c src/faad2-frontend/unicode_support.c -o /root/out/unicode_support.o
 
 # -idirafter /usr/include (not -isystem, and not -I): confirmed on the
 # first real build that emcc's cross-compiler sysroot doesn't see the host
@@ -115,6 +140,7 @@ RUN source /root/emsdk/emsdk_env.sh && \
         -O2 \
         -std=c++11 \
         -I src \
+        -I src/faad2-frontend \
         -I /root/lib/include \
         -idirafter /usr/include \
         -s ENVIRONMENT=node \
@@ -136,6 +162,7 @@ RUN source /root/emsdk/emsdk_env.sh && \
         src/Mp3AudioFileReader.cpp \
         src/ProgressReporter.cpp \
         src/SndFileAudioFileReader.cpp \
+        src/M4aAudioFileReader.cpp \
         src/TimeUtil.cpp \
         src/WaveformBuffer.cpp \
         src/WaveformGenerator.cpp \
@@ -143,9 +170,17 @@ RUN source /root/emsdk/emsdk_env.sh && \
         src/WaveformUtil.cpp \
         /root/out/bstdfile.o \
         /root/out/pdjson.o \
+        /root/out/mp4read.o \
+        /root/out/unicode_support.o \
         /root/lib/lib/libmad.a \
         /root/lib/lib/libid3tag.a \
         /root/lib/lib/libsndfile.a \
+        /root/lib/lib/libFLAC.a \
+        /root/lib/lib/libvorbisenc.a \
+        /root/lib/lib/libvorbis.a \
+        /root/lib/lib/libogg.a \
+        /root/lib/lib/libopus.a \
+        /root/lib/lib/libfaad.a \
         /root/lib/lib/libz.a \
         -o /root/out/audiowaveform.js
 # libz.a: confirmed necessary once binding.cpp started calling into
@@ -158,3 +193,18 @@ RUN source /root/emsdk/emsdk_env.sh && \
 # (copied in transitively via the libid3tag build stage, which vendors it
 # for the same reason — see compile/libid3tag/Dockerfile) — just wasn't
 # on this link line until it was actually needed.
+#
+# libFLAC.a/libvorbisenc.a/libvorbis.a/libogg.a/libopus.a: FLAC/Ogg-Vorbis/
+# Ogg-Opus support (CLAUDE.md decision 9's correction) — libsndfile.a only
+# calls into these, doesn't re-export their symbols, so they still need to
+# be on this final link line explicitly, same as libz.a above. All four are
+# already merged into /root/lib by compile/libsndfile/Dockerfile's own
+# COPY --from= chain, so no new COPY line is needed here — only these link
+# args. libvorbisenc.a before libvorbis.a: matches libsndfile's own real
+# CMakeLists.txt target_link_libraries ordering (Vorbis::vorbisenc listed
+# before the plain Vorbis dependency it itself depends on).
+#
+# libfaad.a: M4A/AAC support (CLAUDE.md decision 9's correction #2) via
+# src/M4aAudioFileReader.cpp (this project's own code, not audiowaveform's —
+# see that file) plus the vendored mp4read.o/unicode_support.o demuxer
+# object files built above.
