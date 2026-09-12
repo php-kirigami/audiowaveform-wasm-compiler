@@ -90,6 +90,16 @@
 			"versions": [
 				"2.11.3"
 			]
+		},
+		"nestegg": {
+			"sourceType": "tarball",
+			"repo": "mozilla/nestegg",
+			"sourceTemplate": "https://github.com/mozilla/nestegg/archive/{version}.tar.gz",
+			"checkUrl": "https://github.com/mozilla/nestegg/commits/master",
+			"note": "WebM/Matroska demuxer (decision 19) — pulls the raw Vorbis/Opus packets out of a WebM container; decoding itself reuses libvorbis/libopus (already vendored above). Verified 2026-09-12 via `gh api repos/mozilla/nestegg/tags` that there are zero real release tags (AC_INIT pins it at a permanent \"0.1git\" dev version) — same \"no latest to track, pin a commit\" situation as libmad/libid3tag, so this is pinned to a specific commit SHA rather than a tag, and update-lib-versions.mjs skips it (sourceType \"tarball\"). Ships no pre-generated `configure` (no release tarball ever cut) — compile/nestegg/Dockerfile runs autoreconf itself.",
+			"versions": [
+				"d6ec55624d8187a2699ac890b83460b973331400"
+			]
 		}
 	}
 }

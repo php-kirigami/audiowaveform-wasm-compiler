@@ -17,6 +17,7 @@
 #include "Mp3AudioFileReader.h"
 #include "SndFileAudioFileReader.h"
 #include "M4aAudioFileReader.h"
+#include "WebmAudioFileReader.h"
 #include "WaveformGenerator.h"
 #include "WaveformBuffer.h"
 #include "Streams.h"
@@ -192,6 +193,7 @@ enum class DetectedFormat {
     // decision 9's correction.
     Sndfile,
     Mpeg4, // MP4/M4A ("....ftyp") — M4aAudioFileReader (CLAUDE.md decision 9's correction #2)
+    Webm, // WebM/Matroska (EBML header) — WebmAudioFileReader (decision 19)
     Unknown // ID3-tagged or bare-sync MP3, or anything else — try Mp3AudioFileReader
 };
 
@@ -206,6 +208,20 @@ DetectedFormat detectFormat(const std::string& bytes) {
     // offset 4, not 0 — the first 4 bytes are the box size, which varies.
     if (bytes.size() >= 8 && bytes.compare(4, 4, "ftyp") == 0) {
         return DetectedFormat::Mpeg4;
+    }
+
+    // WebM (and Matroska/.mkv, which WebmAudioFileReader also happens to
+    // read as long as its audio track is Vorbis/Opus) both start with the
+    // standard EBML document header magic bytes, per the Matroska/EBML
+    // spec — this is the same signature nestegg's own nestegg_sniff_webm()/
+    // nestegg_sniff_mkv() ultimately check first, before their own deeper
+    // element-level validation.
+    if (bytes.size() >= 4 &&
+        static_cast<unsigned char>(bytes[0]) == 0x1A &&
+        static_cast<unsigned char>(bytes[1]) == 0x45 &&
+        static_cast<unsigned char>(bytes[2]) == 0xDF &&
+        static_cast<unsigned char>(bytes[3]) == 0xA3) {
+        return DetectedFormat::Webm;
     }
 
     return DetectedFormat::Unknown;
@@ -235,6 +251,11 @@ val extractAudioPeaks(const std::string& bytes, int samplesPerPixel) {
 
         case DetectedFormat::Mpeg4: {
             M4aAudioFileReader reader;
+            return extractPeaks(reader, bytes, samplesPerPixel);
+        }
+
+        case DetectedFormat::Webm: {
+            WebmAudioFileReader reader;
             return extractPeaks(reader, bytes, samplesPerPixel);
         }
 

@@ -10,6 +10,7 @@ COPY --from=kirigami-audiowaveform-wasm:libmad /root/lib /root/lib
 COPY --from=kirigami-audiowaveform-wasm:libid3tag /root/lib /root/lib
 COPY --from=kirigami-audiowaveform-wasm:libsndfile /root/lib /root/lib
 COPY --from=kirigami-audiowaveform-wasm:libfaad2 /root/lib /root/lib
+COPY --from=kirigami-audiowaveform-wasm:nestegg /root/lib /root/lib
 
 RUN wget "https://github.com/bbc/audiowaveform/archive/refs/tags/$AUDIOWAVEFORM_VERSION.tar.gz" -O audiowaveform.tar.gz && \
     tar xf audiowaveform.tar.gz && \
@@ -17,6 +18,7 @@ RUN wget "https://github.com/bbc/audiowaveform/archive/refs/tags/$AUDIOWAVEFORM_
 
 COPY ./compile/src/binding.cpp /root/audiowaveform/src/binding.cpp
 COPY ./compile/src/M4aAudioFileReader.h ./compile/src/M4aAudioFileReader.cpp /root/audiowaveform/src/
+COPY ./compile/src/WebmAudioFileReader.h ./compile/src/WebmAudioFileReader.cpp /root/audiowaveform/src/
 
 # mp4read.c/.h + unicode_support.c/.h: libfaad2's own frontend MP4 demuxer
 # (CLAUDE.md decision 9's correction #2) — not part of the installed
@@ -163,6 +165,7 @@ RUN source /root/emsdk/emsdk_env.sh && \
         src/ProgressReporter.cpp \
         src/SndFileAudioFileReader.cpp \
         src/M4aAudioFileReader.cpp \
+        src/WebmAudioFileReader.cpp \
         src/TimeUtil.cpp \
         src/WaveformBuffer.cpp \
         src/WaveformGenerator.cpp \
@@ -181,6 +184,7 @@ RUN source /root/emsdk/emsdk_env.sh && \
         /root/lib/lib/libogg.a \
         /root/lib/lib/libopus.a \
         /root/lib/lib/libfaad.a \
+        /root/lib/lib/libnestegg.a \
         /root/lib/lib/libz.a \
         -o /root/out/audiowaveform.js
 # libz.a: confirmed necessary once binding.cpp started calling into
@@ -208,3 +212,8 @@ RUN source /root/emsdk/emsdk_env.sh && \
 # src/M4aAudioFileReader.cpp (this project's own code, not audiowaveform's —
 # see that file) plus the vendored mp4read.o/unicode_support.o demuxer
 # object files built above.
+#
+# libnestegg.a: WebM audio support (decision 19) via
+# src/WebmAudioFileReader.cpp (also this project's own code) — nestegg only
+# demultiplexes the WebM/Matroska container, decoding reuses the
+# libvorbis.a/libopus.a already on this link line above.

@@ -740,20 +740,73 @@ Decisions settled with the user (2026-09-12):
       Dockerfile's own `wget` URL adds the `v` back rather than storing it
       in the matrix (`xiph/flac`'s tags have no such prefix).
 
+19. **WebM audio (Vorbis or Opus) added, built, and verified working
+    (2026-09-12), requested by the user right after decision 18 landed.**
+    WebM restricts its audio codecs to Vorbis and Opus — both already
+    vendored (decision 18) — so this only needed a Matroska/WebM demuxer,
+    not new codec work. Chose Mozilla's **`nestegg`**
+    (`mozilla/nestegg`) over `libwebm`/FFmpeg for the same "one targeted
+    lib at a time" reason `mp4read.c` was chosen for M4A over a general
+    media framework: genuinely minimal (one `include/nestegg/nestegg.h` +
+    one `src/nestegg.c`), and a clean callback-based (`nestegg_io`)
+    demuxing API rather than a file-format-specific one. License verified
+    directly (not assumed): ISC, permissive, GPL-3.0-or-later compatible.
+    No real release tags exist upstream (`AC_INIT` pins a permanent
+    "0.1git" dev version, confirmed via `gh api repos/mozilla/nestegg/tags`
+    — zero results) — pinned to a commit SHA in `matrix.json` instead, same
+    treatment as `libmad`/`libid3tag`'s dead-upstream pins. One real
+    build-time difference from every other autotools lib here: the GitHub
+    source archive at that SHA has no pre-generated `configure` (only ever
+    produced by a real release, which never happened) — `compile/nestegg/
+    Dockerfile` runs `autoreconf -fi` itself (automake/autoconf/libtool
+    already in the base image).
+    - **`compile/src/WebmAudioFileReader.h`/`.cpp`**: genuinely new code
+      for this project (audiowaveform has no WebM reader), implementing
+      `AudioFileReader` the same way `M4aAudioFileReader` does. `nestegg`
+      only demultiplexes — it hands back raw per-track packets, not
+      decoded audio — so this file also drives the actual decode: Vorbis
+      via libvorbis's raw `vorbis_synthesis_*` API (feeding the three
+      Vorbis header packets `nestegg_track_codec_data()` already splits
+      out of the container's CodecPrivate, no manual Xiph-lacing parsing
+      needed), Opus via the much simpler `opus_decode()` (fixed at Opus's
+      own mandatory 48kHz internal rate per RFC 7845, not whatever rate
+      the container metadata happens to report). Scope: Vorbis/Opus audio
+      tracks only, matching what WebM (as opposed to the more permissive
+      Matroska/`.mkv` container it's a restricted profile of) actually
+      allows — `detectFormat()` in `compile/src/binding.cpp` sniffs the
+      standard EBML header magic bytes (`0x1A 0x45 0xDF 0xA3`), the same
+      signature `nestegg`'s own `nestegg_sniff_webm()`/`nestegg_sniff_mkv()`
+      check first.
+    - **Both the container-build and the final link succeeded on the very
+      first real attempt, and so did the very first runtime test** —
+      unlike decision 18's libsndfile-based formats, which needed real
+      debugging (the `CMAKE_FIND_ROOT_PATH` fix) before they worked.
+    - **Verified against real audio, not just a short synthetic clip**:
+      both a 5-second Vorbis-in-WebM and Opus-in-WebM file, then a full
+      6-minute-plus real track (from `assets/`) re-encoded to Opus-in-WebM
+      — all decode to real peaks with correct `sample_rate`/`channels`.
+      Full 9-format regression suite (MP3/WAV/AIFF/FLAC/Ogg-Vorbis/Ogg-
+      Opus/M4A-AAC/WebM-Vorbis/WebM-Opus) re-run clean afterward, confirming
+      no regression in the formats decision 18 had just fixed.
+    - `matrix.json`/`compile/Makefile` gained a `nestegg` entry/target,
+      standalone (only depends on `base-image`, since decoding reuses the
+      already-vendored `libvorbis`/`libopus`); `audiowaveform-wasm`'s
+      prerequisites and final `em++` link line gained it accordingly.
+
 ## Current status
 
 **Builds, runs, and is published (2026-09-12).** `make audiowaveform-wasm`
-produces a real, working `node-builds/audiowaveform.wasm` (~980KB) +
+produces a real, working `node-builds/audiowaveform.wasm` (~1MB) +
 `audiowaveform.js` (a genuine ES module — `-s EXPORT_ES6=1`, decision 17),
 exporting `extractAudioPeaks(bytes, samplesPerPixel)`,
 `getId3Tags(mp3Bytes)`, and `getId3CoverArt(mp3Bytes)`. All three are
-extensively runtime-tested (decisions 16 and 18), not just built: the full
-format matrix now passes for real (MP3/WAV-16/24/float/AIFF/FLAC/Ogg-Vorbis/
-Ogg-Opus/M4A-AAC all produce real peaks — decision 18), 25 real tagged MP3s
-from the user's own library (peaks + tags + cover art, 0 failures/crashes),
-and a deliberately adversarial ID3 batch (ID3v2.3, ID3v2.4, ID3v1-only,
-unicode/emoji/Cyrillic, long strings, numeric genre codes). This repo is
-pushed to
+extensively runtime-tested (decisions 16, 18, and 19), not just built: the
+full format matrix now passes for real (MP3/WAV-16/24/float/AIFF/FLAC/
+Ogg-Vorbis/Ogg-Opus/M4A-AAC/WebM-Vorbis/WebM-Opus all produce real peaks —
+decisions 18 and 19), 25 real tagged MP3s from the user's own library
+(peaks + tags + cover art, 0 failures/crashes), and a deliberately
+adversarial ID3 batch (ID3v2.3, ID3v2.4, ID3v1-only, unicode/emoji/Cyrillic,
+long strings, numeric genre codes). This repo is pushed to
 `https://github.com/php-kirigami/audiowaveform-wasm-compiler`; the
 **published npm package it feeds, `@kirigami/audiowaveform-wasm@1.0.0`,
 lives in a different repo** (`kirigami/packages/audiowaveform-wasm/` —
@@ -815,17 +868,20 @@ produces the raw compiled artifacts, same division of responsibility as
   decision 18 (FLAC/Ogg-Vorbis/Ogg-Opus, `libFLAC`/`libogg`/`libvorbis`/
   `libopus` now vendored and wired in).
 
-**Newly opened by decision 18's work, not yet resolved:**
+- ~~WebM audio~~ — done, see decision 19 (`nestegg` demuxer + the new
+  `WebmAudioFileReader`, decoding via the already-vendored libvorbis/
+  libopus).
 
-- WebM audio (Opus or Vorbis inside a Matroska/WebM container, not Ogg) —
-  requested by the user right after decision 18 landed. Not yet
-  researched: this needs a Matroska/WebM demuxer (`libsndfile` doesn't
-  read Matroska at all), most likely a small, permissively-licensed one in
-  the spirit of this project's `mp4read.c` choice for M4A rather than
-  vendoring all of `libwebm`/FFmpeg — the audio codecs themselves (Opus,
-  Vorbis) are already vendored as of decision 18, so this should only need
-  a demuxer, not new codec work. No Dockerfile or design written yet.
+**Still open:**
+
 - Ogg Vorbis's "second, non-audio logical bitstream" limitation (decision
   18) — not planned to be fixed, just documented; revisit only if it turns
   out to matter for real files the Kirigami player actually needs to
   handle.
+- WebM scope is Vorbis/Opus audio tracks only (decision 19) — matches what
+  WebM itself restricts audio to, so this isn't considered a gap, but
+  worth noting explicitly: a `.webm`-extensioned file with some other
+  audio codec (not standard WebM) or a full Matroska `.mkv` file with a
+  non-Vorbis/Opus audio track (e.g. AC3, FLAC-in-Matroska) will return
+  `null`, same as any other unsupported format — not attempted, no
+  evidence yet it's needed for the Kirigami player's real use case.

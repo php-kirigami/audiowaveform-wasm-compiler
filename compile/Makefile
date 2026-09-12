@@ -17,6 +17,7 @@ LIBFLAC_VERSION := $(call MATRIX_VERSION,libflac)
 LIBVORBIS_VERSION := $(call MATRIX_VERSION,libvorbis)
 LIBOPUS_VERSION := $(call MATRIX_VERSION,libopus)
 LIBFAAD2_VERSION := $(call MATRIX_VERSION,libfaad2)
+NESTEGG_VERSION := $(call MATRIX_VERSION,nestegg)
 AUDIOWAVEFORM_VERSION := $(call MATRIX_VERSION,audiowaveform)
 
 # See php-wasm-compiler's Makefile for why this marker-file pattern matters
@@ -103,11 +104,20 @@ libfaad2/dist/root/lib/lib/libfaad.a: base-image
 	CID=$$(docker create kirigami-audiowaveform-wasm:libfaad2) && docker cp $$CID:/root/lib/lib ./libfaad2/dist/root/lib && docker rm $$CID
 	CID=$$(docker create kirigami-audiowaveform-wasm:libfaad2) && docker cp $$CID:/root/lib/include ./libfaad2/dist/root/lib && docker rm $$CID
 
+# WebM/Matroska demuxer (decision 19) — decoding reuses libvorbis/libopus,
+# already vendored above, so this only needs base-image.
+nestegg: nestegg/dist/root/lib/lib/libnestegg.a
+nestegg/dist/root/lib/lib/libnestegg.a: base-image
+	docker build -f ./nestegg/Dockerfile -t kirigami-audiowaveform-wasm:nestegg . --build-arg NESTEGG_VERSION=$(NESTEGG_VERSION)
+	mkdir -p ./nestegg/dist/root/lib
+	CID=$$(docker create kirigami-audiowaveform-wasm:nestegg) && docker cp $$CID:/root/lib/lib ./nestegg/dist/root/lib && docker rm $$CID
+	CID=$$(docker create kirigami-audiowaveform-wasm:nestegg) && docker cp $$CID:/root/lib/include ./nestegg/dist/root/lib && docker rm $$CID
+
 # Final module: audiowaveform's extracted core (CLAUDE.md decision 8) +
 # our own Embind wrapper (src/binding.cpp), linked against
 # libmad/libid3tag/libsndfile (which itself bundles libogg/libflac/
-# libvorbis/libopus)/libfaad2.
-audiowaveform-wasm: libmad libid3tag libsndfile libfaad2
+# libvorbis/libopus)/libfaad2/nestegg.
+audiowaveform-wasm: libmad libid3tag libsndfile libfaad2 nestegg
 	# Build context is the repo root (..), not compile/ — same convention
 	# php-wasm-compiler's build.js uses for its PHP Dockerfile — so this
 	# Dockerfile can COPY both compile/src/binding.cpp and the repo-root
@@ -119,6 +129,6 @@ audiowaveform-wasm: libmad libid3tag libsndfile libfaad2
 all: audiowaveform-wasm
 
 clean:
-	rm -rf libmad/dist libid3tag/dist libz/dist libsndfile/dist libogg/dist libflac/dist libvorbis/dist libopus/dist libfaad2/dist
+	rm -rf libmad/dist libid3tag/dist libz/dist libsndfile/dist libogg/dist libflac/dist libvorbis/dist libopus/dist libfaad2/dist nestegg/dist
 
 .PHONY: base-image clean-base-image all clean
