@@ -1,0 +1,7 @@
+# Force LF regardless of this machine's system-wide core.autocrlf=true
+# (Git for Windows' default). Without this, checked-out Dockerfiles'
+# heredocs (`RUN bash <<'EOF' ... EOF`) get a literal \r baked into every
+# line, which corrupts things like `git clone <url>` inside the container
+# ("Malformed input to a URL function") — found the hard way on the first
+# real docker build (2026-09-12).
+* text=auto eol=lf
