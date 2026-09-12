@@ -10,6 +10,7 @@ MATRIX_VERSION = $(shell node $(MAKEFILE_DIR)/matrix-version.mjs $(1))
 
 LIBMAD_VERSION := $(call MATRIX_VERSION,libmad)
 LIBID3TAG_VERSION := $(call MATRIX_VERSION,libid3tag)
+LIBZ_VERSION := $(call MATRIX_VERSION,libz)
 LIBSNDFILE_VERSION := $(call MATRIX_VERSION,libsndfile)
 AUDIOWAVEFORM_VERSION := $(call MATRIX_VERSION,audiowaveform)
 
@@ -34,8 +35,17 @@ libmad/dist/root/lib/lib/libmad.a: base-image
 	CID=$$(docker create kirigami-audiowaveform-wasm:libmad) && docker cp $$CID:/root/lib/lib ./libmad/dist/root/lib && docker rm $$CID
 	CID=$$(docker create kirigami-audiowaveform-wasm:libmad) && docker cp $$CID:/root/lib/include ./libmad/dist/root/lib && docker rm $$CID
 
+libz: libz/dist/root/lib/lib/libz.a
+libz/dist/root/lib/lib/libz.a: base-image
+	docker build -f ./libz/Dockerfile -t kirigami-audiowaveform-wasm:libz . --build-arg LIBZ_VERSION=$(LIBZ_VERSION)
+	mkdir -p ./libz/dist/root/lib
+	CID=$$(docker create kirigami-audiowaveform-wasm:libz) && docker cp $$CID:/root/lib/lib ./libz/dist/root/lib && docker rm $$CID
+	CID=$$(docker create kirigami-audiowaveform-wasm:libz) && docker cp $$CID:/root/lib/include ./libz/dist/root/lib && docker rm $$CID
+
+# Needs libz (matrix.json's libz note — libid3tag's configure hard-requires
+# zlib.h, no --without-zlib option exists).
 libid3tag: libid3tag/dist/root/lib/lib/libid3tag.a
-libid3tag/dist/root/lib/lib/libid3tag.a: base-image
+libid3tag/dist/root/lib/lib/libid3tag.a: base-image libz
 	docker build -f ./libid3tag/Dockerfile -t kirigami-audiowaveform-wasm:libid3tag .. --build-arg LIBID3TAG_VERSION=$(LIBID3TAG_VERSION)
 	mkdir -p ./libid3tag/dist/root/lib
 	CID=$$(docker create kirigami-audiowaveform-wasm:libid3tag) && docker cp $$CID:/root/lib/lib ./libid3tag/dist/root/lib && docker rm $$CID
@@ -65,6 +75,6 @@ audiowaveform-wasm: libmad libid3tag libsndfile
 all: audiowaveform-wasm
 
 clean:
-	rm -rf libmad/dist libid3tag/dist libsndfile/dist
+	rm -rf libmad/dist libid3tag/dist libz/dist libsndfile/dist
 
 .PHONY: base-image clean-base-image all clean

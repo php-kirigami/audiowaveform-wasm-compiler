@@ -6,13 +6,13 @@ FROM kirigami-audiowaveform-wasm:base
 
 ARG LIBID3TAG_VERSION
 
-# NOT YET VERIFIED AT AN ACTUAL BUILD (see CLAUDE.md decision 11). Known
-# risk area to check first: libid3tag optionally links zlib to support
-# compressed ID3v2 frames (rare in practice). This project doesn't vendor
-# libz yet — if configure hard-requires zlib rather than treating it as an
-# optional feature, this build will fail until a compile/libz/Dockerfile
-# is added; if it's a soft/optional check, it should just build without
-# compressed-frame support, which is an acceptable v1 limitation.
+# CONFIRMED at the first real build (2026-09-12): libid3tag's configure
+# hard-requires zlib.h (AC_CHECK_HEADER + AC_MSG_ERROR, no --without-zlib
+# escape hatch — checked configure.ac directly). libz vendored specifically
+# for this (see matrix.json's libz entry) — nothing else in this project
+# needs it.
+COPY --from=kirigami-audiowaveform-wasm:libz /root/lib /root/lib
+
 RUN wget "https://sourceforge.net/projects/mad/files/libid3tag/$LIBID3TAG_VERSION/libid3tag-$LIBID3TAG_VERSION.tar.gz/download" -O libid3tag.tar.gz && \
     tar xf libid3tag.tar.gz && \
     mv libid3tag-$LIBID3TAG_VERSION /root/libid3tag
@@ -37,6 +37,8 @@ RUN source /root/emsdk/emsdk_env.sh && \
         --prefix=/root/lib \
         --disable-shared \
         --enable-static \
-        CFLAGS="-DNDEBUG" && \
+        CFLAGS="-DNDEBUG" \
+        CPPFLAGS="-I/root/lib/include" \
+        LDFLAGS="-L/root/lib/lib" && \
     emmake make && \
     emmake make install

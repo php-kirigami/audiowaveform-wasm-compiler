@@ -28,6 +28,15 @@
 				"0.15.1b"
 			]
 		},
+		"libz": {
+			"sourceType": "github-release",
+			"repo": "madler/zlib",
+			"sourceTemplate": "https://zlib.net/zlib-{version}.tar.gz",
+			"note": "Hard, unconditional dependency of libid3tag's configure (no --without-zlib option exists) — found via a real build failure, 2026-09-12. Downloaded from zlib.net directly (not GitHub release assets), but tracked against madler/zlib's tags for version-checking purposes, same convention as libcurl's entry in php-wasm-compiler's own matrix.json.",
+			"versions": [
+				"1.3.2"
+			]
+		},
 		"libsndfile": {
 			"sourceType": "github-release",
 			"repo": "libsndfile/libsndfile",
