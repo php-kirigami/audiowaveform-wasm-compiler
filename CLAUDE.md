@@ -796,7 +796,13 @@ Decisions settled with the user (2026-09-12):
 ## Current status
 
 **Builds, runs, and is published (2026-09-12).** `make audiowaveform-wasm`
-produces a real, working `node-builds/audiowaveform.wasm` (~1MB) +
+produces a real, working `node-builds/audiowaveform.wasm` (~1.9MB — grew
+noticeably after `nestegg` was added; `libnestegg.a` itself is only
+~200KB, and a quick attempt to shrink it by overriding its `-g` debug
+CFLAGS had zero effect on the `.a` size, so the rest of the jump wasn't
+chased further since it isn't blocking anything real — 1.9MB total across
+5 audio codecs + 2 demuxers is still small next to general-purpose
+alternatives like `ffmpeg.wasm`) +
 `audiowaveform.js` (a genuine ES module — `-s EXPORT_ES6=1`, decision 17),
 exporting `extractAudioPeaks(bytes, samplesPerPixel)`,
 `getId3Tags(mp3Bytes)`, and `getId3CoverArt(mp3Bytes)`. All three are
