@@ -171,41 +171,75 @@ val extractPeaks(AudioFileReader& reader, const std::string& bytes, int samplesP
 
 } // namespace
 
+// Picks the right reader by sniffing real container magic bytes, rather
+// than trying one reader and treating failure as "wrong format" — that
+// approach was tried first and was genuinely unreliable: found via the
+// format matrix test that Mp3AudioFileReader::open()/run() can both
+// return true against FLAC/Ogg input, because libmad's frame-sync scanner
+// occasionally finds a small number of coincidentally-valid-looking sync
+// words in compressed, high-entropy binary data (FLAC/Ogg bitstreams
+// included) — producing a small but nonzero, garbage "successful" result
+// instead of cleanly failing. A `buffer.getSize() == 0` check (tried
+// first) wasn't sufficient either — some inputs decoded a handful of real
+// garbage points, not exactly zero. Real magic bytes are cheap, exact,
+// and don't have this false-positive problem.
+enum class DetectedFormat {
+    RiffOrAiff, // WAV ("RIFF...WAVE") or AIFF ("FORM...AIFF"/"AIFC") — libsndfile
+    KnownUnsupported, // FLAC ("fLaC"), Ogg (Vorbis/Opus, "OggS"), MP4/M4A ("....ftyp") — decision 9/13
+    Unknown // ID3-tagged or bare-sync MP3, or anything else — try Mp3AudioFileReader
+};
+
+DetectedFormat detectFormat(const std::string& bytes) {
+    if (bytes.size() >= 4 &&
+        (bytes.compare(0, 4, "RIFF") == 0 || bytes.compare(0, 4, "FORM") == 0)) {
+        return DetectedFormat::RiffOrAiff;
+    }
+
+    if (bytes.size() >= 4 &&
+        (bytes.compare(0, 4, "fLaC") == 0 || bytes.compare(0, 4, "OggS") == 0)) {
+        return DetectedFormat::KnownUnsupported;
+    }
+
+    // MP4-family containers (M4A/AAC included) store their box type at
+    // offset 4, not 0 — the first 4 bytes are the box size, which varies.
+    if (bytes.size() >= 8 && bytes.compare(4, 4, "ftyp") == 0) {
+        return DetectedFormat::KnownUnsupported;
+    }
+
+    return DetectedFormat::Unknown;
+}
+
+} // namespace
+
 // Extracts waveform peak data from an in-memory audio buffer of any
-// supported format. Tries Mp3AudioFileReader first, then falls back to
-// SndFileAudioFileReader (WAV/AIFF/RAW — CLAUDE.md decision 13: this
-// build's libsndfile has ENABLE_EXTERNAL_LIBS=OFF, so FLAC/Ogg-Vorbis/Opus
-// are NOT supported yet despite being formats libsndfile can otherwise
-// read) — callers don't need to know the format up front. Renamed from
-// the original two-function split (extractMp3Peaks/extractWavPeaks) per
-// the user's request, 2026-09-12.
-//
-// CORRECTION, found immediately by re-running the format matrix test
-// after the rename (not assumed): Mp3AudioFileReader::open()/run() do
-// NOT reliably fail on non-MP3 input — libmad's frame scan can find zero
-// valid sync frames in arbitrary bytes without treating that as a decode
-// error, so FLAC/Ogg/Opus/M4A files were "succeeding" through the MP3
-// path with a bogus zero-length, 0Hz result instead of falling through.
-// Fixed in extractPeaks() (below) by also treating an empty
-// `buffer.getSize() == 0` result as failure, not just `!success` — this
-// is what makes trying MP3 first and falling through actually safe.
+// supported format — callers don't need to know the format up front.
+// Renamed from the original two-function split
+// (extractMp3Peaks/extractWavPeaks) per the user's request, 2026-09-12.
+// See detectFormat()'s comment above for why this dispatches on real
+// magic bytes rather than a try-MP3-then-fall-back-on-failure approach.
 //
 // `samplesPerPixel` controls waveform resolution, same meaning as
 // audiowaveform's own `--pixels-per-second` family of CLI options (see
 // WaveformGenerator.h's ScaleFactor subclasses — SamplesPerPixelScaleFactor
 // is the simplest one to wire up first; PixelsPerSecondScaleFactor is a
 // natural follow-up parameter). Returns the peaks object (decision 6), or
-// `null` if no supported reader could decode it.
+// `null` if the format isn't supported or the file failed to decode.
 val extractAudioPeaks(const std::string& bytes, int samplesPerPixel) {
-    Mp3AudioFileReader mp3Reader;
-    val result = extractPeaks(mp3Reader, bytes, samplesPerPixel);
+    switch (detectFormat(bytes)) {
+        case DetectedFormat::RiffOrAiff: {
+            SndFileAudioFileReader reader;
+            return extractPeaks(reader, bytes, samplesPerPixel);
+        }
 
-    if (!result.isNull()) {
-        return result;
+        case DetectedFormat::KnownUnsupported:
+            return val::null();
+
+        case DetectedFormat::Unknown:
+        default: {
+            Mp3AudioFileReader reader;
+            return extractPeaks(reader, bytes, samplesPerPixel);
+        }
     }
-
-    SndFileAudioFileReader sndReader;
-    return extractPeaks(sndReader, bytes, samplesPerPixel);
 }
 
 namespace {
