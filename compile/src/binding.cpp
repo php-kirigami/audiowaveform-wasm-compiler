@@ -169,8 +169,6 @@ val extractPeaks(AudioFileReader& reader, const std::string& bytes, int samplesP
     return bufferToPeaksObject(buffer);
 }
 
-} // namespace
-
 // Picks the right reader by sniffing real container magic bytes, rather
 // than trying one reader and treating failure as "wrong format" — that
 // approach was tried first and was genuinely unreliable: found via the
