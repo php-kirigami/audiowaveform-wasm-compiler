@@ -152,7 +152,17 @@ val extractPeaks(AudioFileReader& reader, const std::string& bytes, int samplesP
 
     remove(TEMP_INPUT_PATH);
 
-    if (!success) {
+    // buffer.getSize() == 0 is treated as failure too, not just a valid
+    // (if useless) empty result: found necessary the hard way when
+    // extractAudioPeaks() started trying Mp3AudioFileReader against
+    // clearly-non-MP3 input (FLAC/Ogg/Opus/M4A) — open()/run() both
+    // returned true, but produced a buffer with sample_rate 0 and zero
+    // peaks, because libmad's frame scan can find zero valid MP3 sync
+    // frames in arbitrary bytes without that itself being treated as a
+    // decode error. Without this check, extractAudioPeaks() would report
+    // a bogus "success" for literally any unsupported format instead of
+    // falling through to try SndFileAudioFileReader.
+    if (!success || buffer.getSize() == 0) {
         return val::null();
     }
 
@@ -168,10 +178,17 @@ val extractPeaks(AudioFileReader& reader, const std::string& bytes, int samplesP
 // are NOT supported yet despite being formats libsndfile can otherwise
 // read) — callers don't need to know the format up front. Renamed from
 // the original two-function split (extractMp3Peaks/extractWavPeaks) per
-// the user's request, 2026-09-12, once real-world testing (25 tagged MP3s
-// plus WAV/AIFF/Ogg/FLAC/Opus/M4A conversions) confirmed
-// Mp3AudioFileReader::open() fails cleanly (no crash) on non-MP3 input, so
-// trying it first and falling through is safe.
+// the user's request, 2026-09-12.
+//
+// CORRECTION, found immediately by re-running the format matrix test
+// after the rename (not assumed): Mp3AudioFileReader::open()/run() do
+// NOT reliably fail on non-MP3 input — libmad's frame scan can find zero
+// valid sync frames in arbitrary bytes without treating that as a decode
+// error, so FLAC/Ogg/Opus/M4A files were "succeeding" through the MP3
+// path with a bogus zero-length, 0Hz result instead of falling through.
+// Fixed in extractPeaks() (below) by also treating an empty
+// `buffer.getSize() == 0` result as failure, not just `!success` — this
+// is what makes trying MP3 first and falling through actually safe.
 //
 // `samplesPerPixel` controls waveform resolution, same meaning as
 // audiowaveform's own `--pixels-per-second` family of CLI options (see
