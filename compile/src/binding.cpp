@@ -4,16 +4,12 @@
 // (Mp3AudioFileReader, SndFileAudioFileReader, WaveformGenerator,
 // WaveformBuffer, ...) is audiowaveform's own unmodified source, fetched
 // at build time by ../audiowaveform/Dockerfile.
-//
-// NOT YET COMPILED OR TESTED (see CLAUDE.md decision 11 — no docker build
-// has been run yet). Written from a direct reading of audiowaveform's
-// AudioFileReader.h / Mp3AudioFileReader.h / SndFileAudioFileReader.h /
-// WaveformGenerator.h / WaveformBuffer.h headers, not guessed.
 
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
 
 #include <cstdio>
+#include <iostream>
 #include <string>
 
 #include "AudioFileReader.h"
@@ -21,8 +17,18 @@
 #include "SndFileAudioFileReader.h"
 #include "WaveformGenerator.h"
 #include "WaveformBuffer.h"
+#include "Streams.h"
 
 using namespace emscripten;
+
+// Streams.h only declares these `extern`; audiowaveform's own Main.cpp
+// (excluded from this build, decision 4) is normally what defines them.
+// Log.cpp needs a real definition to link since it's part of the extracted
+// core (decision 13 — required by SndFileAudioFileReader's ProgressReporter
+// dependency chain). std::cerr for errors is enough for a wasm module with
+// no CLI-style stdout waveform-info printing.
+std::ostream& output_stream = std::cout;
+std::ostream& error_stream = std::cerr;
 
 namespace {
 

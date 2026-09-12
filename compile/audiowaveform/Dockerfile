@@ -54,6 +54,20 @@ WORKDIR /root/audiowaveform
 # failed to resolve an #include — so emcc's own libc headers still win,
 # and only `boost/*` (which doesn't exist in emcc's sysroot at all) falls
 # through to the host path.
+#
+# -x c before the two .c sources (madlld's bstdfile.c, pdjson.c): confirmed
+# on the first real build that em++ compiles every input as C++ regardless
+# of extension (a "treating 'c' input as 'c++'" deprecation warning was the
+# tell). Both files are included from C++ through a header that
+# self-wraps in `extern "C" { ... }` (BStdFile.h explicitly for bstdfile.h;
+# pdjson.h guards itself with `#ifdef __cplusplus`), so callers expect
+# plain C-linkage (unmangled) symbols — but compiling the .c files
+# themselves as C++ produced mangled symbols instead, so wasm-ld reported
+# `undefined symbol: NewBstdFile` and friends even though the object file
+# genuinely contained (mangled) definitions. `-x c` forces real C
+# compilation for just these two inputs (nothing after them needs C++
+# again — the rest of the command is static-library arguments, which
+# `-x` doesn't affect).
 RUN mkdir -p /root/out
 
 RUN source /root/emsdk/emsdk_env.sh && \
@@ -72,7 +86,6 @@ RUN source /root/emsdk/emsdk_env.sh && \
         src/AudioFileReader.cpp \
         src/AudioProcessor.cpp \
         src/BStdFile.cpp \
-        src/madlld-1.1p1/bstdfile.c \
         src/Error.cpp \
         src/FileHandle.cpp \
         src/FileUtil.cpp \
@@ -83,10 +96,12 @@ RUN source /root/emsdk/emsdk_env.sh && \
         src/SndFileAudioFileReader.cpp \
         src/TimeUtil.cpp \
         src/WaveformBuffer.cpp \
-        src/pdjson/pdjson.c \
         src/WaveformGenerator.cpp \
         src/WaveformRescaler.cpp \
         src/WaveformUtil.cpp \
+        -x c \
+        src/madlld-1.1p1/bstdfile.c \
+        src/pdjson/pdjson.c \
         /root/lib/lib/libmad.a \
         /root/lib/lib/libid3tag.a \
         /root/lib/lib/libsndfile.a \
