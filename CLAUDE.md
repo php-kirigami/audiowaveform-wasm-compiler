@@ -552,19 +552,96 @@ Decisions settled with the user (2026-09-12):
       `libid3tag` is good enough as-is; no need to vendor a heavier tag
       library for now.**
 
+17. **`@kirigami/audiowaveform-wasm` assembled and published to npm as
+    `1.0.0` (2026-09-12).** Following the real, existing precedent — not
+    guessed: `@kirigami/php-wasm` (the analogous PHP package) lives inside
+    the **`kirigami` monorepo** at `kirigami/packages/php-wasm/` (an npm
+    workspace, `"workspaces": ["packages/*"]`), published via that repo's
+    own interactive `scripts/publish.js`, NOT assembled inside
+    `php-wasm-compiler` itself. Confirmed this by actually reading that
+    structure and `publish.js` before creating anything. Mirrored exactly
+    for this project: `kirigami/packages/audiowaveform-wasm/` (a sibling
+    repo to this one — `audiowaveform-wasm-compiler` — not a subdirectory
+    of it), containing `package.json`, `index.js` (thin async wrapper —
+    `extractAudioPeaks`/`getId3Tags`/`getId3CoverArt`, lazily instantiating
+    and memoizing the wasm module), `index.d.ts` (full JSDoc'd types),
+    `README.md` (Kirigami convention), `LICENSE` (GPL-3.0, copied from
+    this repo), and `dist/audiowaveform.{js,wasm}` (the compiled output,
+    copied in — not built from that repo).
+    - **A real bug found while assembling the package, not before**:
+      copying `node-builds/audiowaveform.js` as-is into the new package
+      and testing it there threw `TypeError: createModule is not a
+      function`. Root cause: Emscripten's `MODULARIZE` output without
+      `EXPORT_ES6` is UMD-shaped (a `module.exports = factory` branch, no
+      real `export` syntax) — Node's CJS/ESM interop only maps that to
+      `import().default` when the file is *resolved* as CommonJS, which
+      depends on the nearest controlling `package.json`'s `"type"` field.
+      It worked by accident when tested straight from this repo's own
+      `node-builds/` (no `package.json` anywhere in that directory tree,
+      so Node defaults `.js` to CJS) but broke inside
+      `@kirigami/audiowaveform-wasm`, a real `"type": "module"` package —
+      Node treated the vendored file as ESM too, the UMD branch never
+      ran, and `.default` came back `undefined`. **Fixed at the source**,
+      not with a workaround in the consuming package: added
+      `-s EXPORT_ES6=1` to `compile/audiowaveform/Dockerfile`'s `em++`
+      invocation, so the compiler itself emits a genuine
+      `export default createAudiowaveformModule;` — confirmed by
+      inspecting the rebuilt file's actual tail. Works correctly
+      regardless of the consumer's own module type now, which is the
+      right fix given this project's own ESM convention (decision 15).
+    - **Published for real**, not just assembled: `npm login` (the user,
+      interactively, since Claude Code's own auto-mode classifier and the
+      non-interactive Bash tool can't complete an npm web/2FA login flow)
+      then `node scripts/publish.js --only audiowaveform-wasm`. First
+      attempt with `--yes` alone hit `EOTP` (one-time-password required)
+      — confirmed the auth URL npm prints is deliberately redacted
+      (`***`) when npm's own output detects it's not a live interactive
+      TTY, specifically to avoid a captured/piped consumer (this session
+      included) acquiring a login session token; the correct path is
+      either the user completing that browser flow directly themselves,
+      or supplying a real TOTP code from their own authenticator app via
+      `--otp`, which `publish.js` already supports as documented. User
+      provided a live OTP code; republishing with `--otp <code>`
+      succeeded. **Verified live on the real registry** afterward (not
+      just trusted the script's own success message): `npm view` and a
+      direct `curl` against `registry.npmjs.org` both initially 404'd —
+      genuine publish-to-registry propagation delay for a brand-new
+      package (confirmed via a polling loop, not assumed away), not a
+      failed publish or an `npm view` local-cache artifact (checked both
+      explanations before concluding it was just propagation lag) —
+      resolved within about a minute.
+    - Local `git commit` in the `kirigami` repo was scoped carefully:
+      that repo already had unrelated uncommitted changes in progress
+      (`packages/kirigami/bin/kiri.js`, `packages/php-wasm/jspi/...`) —
+      staged and committed only the new `packages/audiowaveform-wasm/`
+      paths explicitly, never a broad `git add -A`, so as not to sweep up
+      or interfere with that other in-flight work. Pushed once the user
+      confirmed.
+    - **`@kirigami/audiowaveform-wasm@1.0.0` is now a real, installable
+      npm package** — `npm install @kirigami/audiowaveform-wasm` works for
+      anyone. This resolves the "published npm package name is not yet
+      decided" item that had been open since this repo's very first
+      scaffolding commit.
+
 ## Current status
 
-**Builds and runs (2026-09-12).** `make audiowaveform-wasm` produces a
-real, working `node-builds/audiowaveform.wasm` (~640KB) +
-`audiowaveform.js`, exporting `extractAudioPeaks(bytes, samplesPerPixel)`,
+**Builds, runs, and is published (2026-09-12).** `make audiowaveform-wasm`
+produces a real, working `node-builds/audiowaveform.wasm` (~640KB) +
+`audiowaveform.js` (a genuine ES module — `-s EXPORT_ES6=1`, decision 17),
+exporting `extractAudioPeaks(bytes, samplesPerPixel)`,
 `getId3Tags(mp3Bytes)`, and `getId3CoverArt(mp3Bytes)`. All three are
 extensively runtime-tested (decision 16), not just built: the format
 matrix (MP3/WAV-16/24/float/AIFF pass, FLAC/Ogg/Opus/M4A cleanly `null`),
 25 real tagged MP3s from the user's own library (peaks + tags + cover
 art, 0 failures/crashes), and a deliberately adversarial ID3 batch
 (ID3v2.3, ID3v2.4, ID3v1-only, unicode/emoji/Cyrillic, long strings,
-numeric genre codes). Repo pushed to
-`https://github.com/php-kirigami/audiowaveform-wasm-compiler`.
+numeric genre codes). This repo is pushed to
+`https://github.com/php-kirigami/audiowaveform-wasm-compiler`; the
+**published npm package it feeds, `@kirigami/audiowaveform-wasm@1.0.0`,
+lives in a different repo** (`kirigami/packages/audiowaveform-wasm/` —
+decision 17) and is live on the npm registry right now — this repo only
+produces the raw compiled artifacts, same division of responsibility as
+`php-wasm-compiler` vs. `@kirigami/php-wasm`.
 
 **Not yet done / open questions:**
 
@@ -601,9 +678,9 @@ numeric genre codes). Repo pushed to
   numeric-only `TCON` genre codes (e.g. `"17"`) to their text name via
   `id3_genre_name()` — found as a real, minor gap during decision 16's
   adversarial ID3 testing, not yet fixed.
-- Repo/package naming: this repo is `audiowaveform-wasm-compiler`
-  (matching `php-wasm-compiler`'s naming pattern); the published npm
-  package name is not yet decided (candidate: `@kirigami/audiowaveform-wasm`).
+- ~~Repo/package naming~~ — this repo is `audiowaveform-wasm-compiler`
+  (matching `php-wasm-compiler`'s naming pattern); the published package
+  is `@kirigami/audiowaveform-wasm` (decision 17), live on npm as `1.0.0`.
 - ~~GitHub remote~~ — **created and pushed 2026-09-12**:
   `https://github.com/php-kirigami/audiowaveform-wasm-compiler`. Claude
   Code's own auto-mode classifier had refused `gh repo create` for a new
