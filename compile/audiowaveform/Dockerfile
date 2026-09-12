@@ -37,23 +37,32 @@ WORKDIR /root/audiowaveform
 # Array.h (needed directly by SndFileAudioFileReader, not just CLI progress
 # display the way they are for GdImageRenderer) turned out to be required
 # too — see decision 13's correction to decision 8's original file list.
-# -isystem /usr/include: confirmed on the first real build that emcc's
-# cross-compiler sysroot doesn't see the host Linux system's headers by
-# default (correct behavior for a real cross-compiler in general — avoids
-# picking up host-architecture-specific headers), even though
-# base-image/Dockerfile's `apt install libboost-dev` genuinely does put
-# boost/format.hpp at /usr/include/boost/format.hpp (verified directly:
-# `docker run ... find / -iname format.hpp` finds it). Since we only use
-# header-only boost::format (decision 8 — no compiled Boost component is
-# linked), exposing the host's /usr/include for parsing is safe here; a
-# real ABI-affecting header would not be.
+# -idirafter /usr/include (not -isystem, and not -I): confirmed on the
+# first real build that emcc's cross-compiler sysroot doesn't see the host
+# Linux system's headers by default (correct behavior in general), even
+# though base-image/Dockerfile's `apt install libboost-dev` genuinely does
+# put boost/format.hpp at /usr/include/boost/format.hpp (verified
+# directly: `docker run ... find / -iname format.hpp` finds it). A first
+# attempt with `-isystem /usr/include` overcorrected: `-isystem` still
+# ranks ahead of some of emcc's own sysroot paths, so `<cassert>` ended up
+# resolving to the HOST's real glibc `assert.h`, which then choked on
+# `bits/wordsize.h` (a glibc-internal, multiarch-subdirectory header this
+# flat include path doesn't reach) — exactly the "host-architecture-
+# specific header getting picked up by a cross-compiler" risk the original
+# comment worried about, now actually triggered for libc instead of boost.
+# `-idirafter` is the standard fix for "add a fallback include path without
+# letting it shadow the compiler's own headers": it's only ever consulted
+# after every other search path (including emcc's own sysroot) has already
+# failed to resolve an #include — so emcc's own libc headers still win,
+# and only `boost/*` (which doesn't exist in emcc's sysroot at all) falls
+# through to the host path.
 RUN source /root/emsdk/emsdk_env.sh && \
     em++ \
         -O2 \
         -std=c++11 \
         -I src \
         -I /root/lib/include \
-        -isystem /usr/include \
+        -idirafter /usr/include \
         -s ENVIRONMENT=node \
         -s ALLOW_MEMORY_GROWTH=1 \
         -s MODULARIZE=1 \
