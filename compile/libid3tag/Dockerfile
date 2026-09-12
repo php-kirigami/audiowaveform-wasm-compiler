@@ -17,12 +17,24 @@ RUN wget "https://sourceforge.net/projects/mad/files/libid3tag/$LIBID3TAG_VERSIO
     tar xf libid3tag.tar.gz && \
     mv libid3tag-$LIBID3TAG_VERSION /root/libid3tag
 
+# Same fix as compile/libmad/Dockerfile (same real patch content — this is
+# the same 2004-era SourceForge "mad" project, its bundled config.sub is
+# byte-identical to libmad's own, confirmed with `diff -q` before
+# generating the patch).
+COPY ./patches/libid3tag/config.sub-wasm32-emscripten.patch /root/config.sub.patch
+RUN cd /root/libid3tag && git apply --no-index -v /root/config.sub.patch
+
+# CFLAGS="-O2": added preemptively, not yet confirmed necessary for this
+# lib specifically — libmad (same project, same era) hit clang rejecting
+# its configure's default GCC-specific optimization flags outright, see
+# compile/libmad/Dockerfile's comment for the exact flags and why.
 RUN source /root/emsdk/emsdk_env.sh && \
     cd /root/libid3tag && \
     emconfigure ./configure \
         --host=wasm32-unknown-emscripten \
         --prefix=/root/lib \
         --disable-shared \
-        --enable-static && \
+        --enable-static \
+        CFLAGS="-O2" && \
     emmake make && \
     emmake make install

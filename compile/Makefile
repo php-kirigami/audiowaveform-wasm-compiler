@@ -26,14 +26,17 @@ clean-base-image:
 
 libmad: libmad/dist/root/lib/lib/libmad.a
 libmad/dist/root/lib/lib/libmad.a: base-image
-	docker build -f ./libmad/Dockerfile -t kirigami-audiowaveform-wasm:libmad . --build-arg LIBMAD_VERSION=$(LIBMAD_VERSION)
+	# Context is the repo root (..), not compile/ — needed so the
+	# Dockerfile can COPY the repo-root patches/libmad/ directory
+	# (CLAUDE.md decision 12's convention).
+	docker build -f ./libmad/Dockerfile -t kirigami-audiowaveform-wasm:libmad .. --build-arg LIBMAD_VERSION=$(LIBMAD_VERSION)
 	mkdir -p ./libmad/dist/root/lib
 	CID=$$(docker create kirigami-audiowaveform-wasm:libmad) && docker cp $$CID:/root/lib/lib ./libmad/dist/root/lib && docker rm $$CID
 	CID=$$(docker create kirigami-audiowaveform-wasm:libmad) && docker cp $$CID:/root/lib/include ./libmad/dist/root/lib && docker rm $$CID
 
 libid3tag: libid3tag/dist/root/lib/lib/libid3tag.a
 libid3tag/dist/root/lib/lib/libid3tag.a: base-image
-	docker build -f ./libid3tag/Dockerfile -t kirigami-audiowaveform-wasm:libid3tag . --build-arg LIBID3TAG_VERSION=$(LIBID3TAG_VERSION)
+	docker build -f ./libid3tag/Dockerfile -t kirigami-audiowaveform-wasm:libid3tag .. --build-arg LIBID3TAG_VERSION=$(LIBID3TAG_VERSION)
 	mkdir -p ./libid3tag/dist/root/lib
 	CID=$$(docker create kirigami-audiowaveform-wasm:libid3tag) && docker cp $$CID:/root/lib/lib ./libid3tag/dist/root/lib && docker rm $$CID
 	CID=$$(docker create kirigami-audiowaveform-wasm:libid3tag) && docker cp $$CID:/root/lib/include ./libid3tag/dist/root/lib && docker rm $$CID
