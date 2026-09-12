@@ -1,0 +1,20 @@
+{
+	"name": "@kirigami/audiowaveform-wasm-compile",
+	"version": "0.1.0",
+	"description": "audiowaveform-to-WebAssembly compilation pipeline (Docker + Emscripten)",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/php-kirigami/audiowaveform-wasm-compiler"
+	},
+	"private": true,
+	"license": "GPL-3.0-or-later",
+	"type": "module",
+	"engines": {
+		"node": ">=24.0.0"
+	},
+	"scripts": {
+		"build:base-image": "make base-image",
+		"build:audiowaveform": "make audiowaveform-wasm",
+		"update-versions": "node update-lib-versions.mjs"
+	}
+}

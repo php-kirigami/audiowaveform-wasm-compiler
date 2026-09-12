@@ -69,8 +69,8 @@ Output lands in `node-builds/`. Library versions (`libmad`, `libid3tag`, `libsnd
 ## Usage
 
 ```js
-const createModule = require('./node-builds/audiowaveform.js');
-const fs = require('fs');
+import createModule from './node-builds/audiowaveform.js';
+import fs from 'node:fs';
 
 const module = await createModule();
 const mp3Bytes = fs.readFileSync('song.mp3');

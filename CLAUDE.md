@@ -414,6 +414,20 @@ Decisions settled with the user (2026-09-12):
       not the interactive-CLI/config-file layer. Revisit that separately if
       asked.
 
+15. **ESM throughout, like every other Kirigami project (2026-09-12,
+    explicit user note).** `compile/matrix-version.mjs` and
+    `compile/update-lib-versions.mjs` were already ESM by construction
+    (`.mjs`, `import`/`export`), but nothing had formalized this as a
+    project-wide convention yet. Added `compile/package.json`
+    (`"type": "module"`, mirroring `php-wasm-compiler/compile/package.json`'s
+    shape) and fixed `README.md`'s Usage example, which had used
+    CommonJS `require()` — corrected to `import`, matching the real pattern
+    `../kirigami/packages/php-wasm/index.js` uses for loading its own
+    Emscripten `MODULARIZE` output (`await import('./jspi/php_8_5.js')` —
+    Node's ESM loader interops with Emscripten's default CJS-shaped
+    output directly, no `-s EXPORT_ES6` build flag needed on the emcc
+    side).
+
 ## Current status
 
 **Scaffolding + a full, unbuilt Docker/Emscripten pipeline, now with
