@@ -76,31 +76,43 @@ import fs from 'node:fs';
 const module = await createModule();
 const mp3Bytes = fs.readFileSync('song.mp3');
 
-const peaks = module.extractMp3Peaks(mp3Bytes, 512);
+const peaks = module.extractAudioPeaks(mp3Bytes, 512);
 // { version: 2, channels: 2, sample_rate: 44100, samples_per_pixel: 512,
 //   bits: 16, length: 1234, data: [...] }
 
-// WAV/AIFF/RAW instead of MP3:
-const wavPeaks = module.extractWavPeaks(fs.readFileSync('song.wav'), 512);
+// Same function for WAV/AIFF/RAW — format is auto-detected, tries MP3
+// first then falls back to libsndfile.
+const wavPeaks = module.extractAudioPeaks(fs.readFileSync('song.wav'), 512);
+
+// ID3 tag metadata and embedded cover art (MP3 only):
+const tags = module.getId3Tags(mp3Bytes);
+// { title, artist, album, albumArtist, year, track, genre } — each a
+// string or null if that frame isn't present; null if there's no tag at all
+
+const cover = module.getId3CoverArt(mp3Bytes);
+// { mimeType, pictureType, data } — data is a plain array of byte values
+// (0-255); null if there's no embedded cover art
 ```
 
 ---
 
 ## Format support
 
-Tested 2026-09-12 against real audio (a FLAC album re-encoded to each format with `ffmpeg`), not just assumed from library capabilities:
+Tested 2026-09-12 against real audio — a FLAC album re-encoded to each format with `ffmpeg`, plus 25 real, randomly-sampled tagged MP3s (not just assumed from library capabilities):
 
-| Format | Function | Status | Notes |
-| --- | --- | --- | --- |
-| MP3 | `extractMp3Peaks` | ✅ Works | `libmad` + `libid3tag` |
-| WAV (16-bit PCM) | `extractWavPeaks` | ✅ Works | |
-| WAV (24-bit PCM) | `extractWavPeaks` | ✅ Works | |
-| WAV (32-bit float) | `extractWavPeaks` | ✅ Works | |
-| AIFF | `extractWavPeaks` | ✅ Works | |
-| FLAC | `extractWavPeaks` | ❌ Not yet | `libsndfile` built with `ENABLE_EXTERNAL_LIBS=OFF` — needs `libFLAC` vendored |
-| Ogg Vorbis | `extractWavPeaks` | ❌ Not yet | same — needs `libogg` + `libvorbis` |
-| Opus | `extractWavPeaks` | ❌ Not yet | same — needs `libogg` + `libopus` |
-| M4A/AAC | — | ❌ Not yet | needs a new decoder path entirely, planned via `libfaad2` (not `libfdk-aac` — GPL-incompatible license) — see `CLAUDE.md` |
+| Format | Status | Notes |
+| --- | --- | --- |
+| MP3 | ✅ Works | `libmad` + `libid3tag`; peaks, tags, and cover art all verified against 25 real files (0 failures, 0 crashes) |
+| WAV (16-bit PCM) | ✅ Works | |
+| WAV (24-bit PCM) | ✅ Works | |
+| WAV (32-bit float) | ✅ Works | |
+| AIFF | ✅ Works | |
+| FLAC | ❌ Not yet | `libsndfile` built with `ENABLE_EXTERNAL_LIBS=OFF` — needs `libFLAC` vendored |
+| Ogg Vorbis | ❌ Not yet | same — needs `libogg` + `libvorbis` |
+| Opus | ❌ Not yet | same — needs `libogg` + `libopus` |
+| M4A/AAC | ❌ Not yet | needs a new decoder path entirely, planned via `libfaad2` (not `libfdk-aac` — GPL-incompatible license) — see `CLAUDE.md` |
+
+`extractAudioPeaks()` returns `null` for unsupported formats — never crashes.
 
 Unsupported formats fail cleanly (the function returns `null`), never crash.
 

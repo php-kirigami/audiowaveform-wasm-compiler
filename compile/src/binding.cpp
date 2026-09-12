@@ -161,25 +161,34 @@ val extractPeaks(AudioFileReader& reader, const std::string& bytes, int samplesP
 
 } // namespace
 
-// Extracts waveform peak data from an in-memory MP3 buffer.
+// Extracts waveform peak data from an in-memory audio buffer of any
+// supported format. Tries Mp3AudioFileReader first, then falls back to
+// SndFileAudioFileReader (WAV/AIFF/RAW — CLAUDE.md decision 13: this
+// build's libsndfile has ENABLE_EXTERNAL_LIBS=OFF, so FLAC/Ogg-Vorbis/Opus
+// are NOT supported yet despite being formats libsndfile can otherwise
+// read) — callers don't need to know the format up front. Renamed from
+// the original two-function split (extractMp3Peaks/extractWavPeaks) per
+// the user's request, 2026-09-12, once real-world testing (25 tagged MP3s
+// plus WAV/AIFF/Ogg/FLAC/Opus/M4A conversions) confirmed
+// Mp3AudioFileReader::open() fails cleanly (no crash) on non-MP3 input, so
+// trying it first and falling through is safe.
+//
 // `samplesPerPixel` controls waveform resolution, same meaning as
 // audiowaveform's own `--pixels-per-second` family of CLI options (see
 // WaveformGenerator.h's ScaleFactor subclasses — SamplesPerPixelScaleFactor
 // is the simplest one to wire up first; PixelsPerSecondScaleFactor is a
 // natural follow-up parameter). Returns the peaks object (decision 6), or
-// `null` on decode failure.
-val extractMp3Peaks(const std::string& mp3Bytes, int samplesPerPixel) {
-    Mp3AudioFileReader reader;
-    return extractPeaks(reader, mp3Bytes, samplesPerPixel);
-}
+// `null` if no supported reader could decode it.
+val extractAudioPeaks(const std::string& bytes, int samplesPerPixel) {
+    Mp3AudioFileReader mp3Reader;
+    val result = extractPeaks(mp3Reader, bytes, samplesPerPixel);
 
-// Same as extractMp3Peaks, but for formats libsndfile understands: WAV,
-// AIFF, RAW (CLAUDE.md decision 13 — this build's libsndfile is compiled
-// with ENABLE_EXTERNAL_LIBS=OFF, so FLAC/Ogg-Vorbis/Opus are NOT supported
-// yet despite being formats libsndfile can otherwise read).
-val extractWavPeaks(const std::string& audioBytes, int samplesPerPixel) {
-    SndFileAudioFileReader reader;
-    return extractPeaks(reader, audioBytes, samplesPerPixel);
+    if (!result.isNull()) {
+        return result;
+    }
+
+    SndFileAudioFileReader sndReader;
+    return extractPeaks(sndReader, bytes, samplesPerPixel);
 }
 
 namespace {
@@ -363,8 +372,7 @@ val getId3CoverArt(const std::string& mp3Bytes) {
 }
 
 EMSCRIPTEN_BINDINGS(kirigami_audiowaveform) {
-    function("extractMp3Peaks", &extractMp3Peaks);
-    function("extractWavPeaks", &extractWavPeaks);
+    function("extractAudioPeaks", &extractAudioPeaks);
     function("getId3Tags", &getId3Tags);
     function("getId3CoverArt", &getId3CoverArt);
 }
