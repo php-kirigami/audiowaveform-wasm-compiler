@@ -24,7 +24,7 @@ Builds a waveform-peak-extraction module for the **[Kirigami](https://github.com
 - ✅ **Node.js** only, no browser target
 - ✅ One monolithic wasm module — no JSPI, no Asyncify, no dylink side-modules (peak extraction is synchronous, CPU-bound work)
 - ✅ Buffer in, JS object out — output shaped like `audiowaveform`'s own documented peaks format, so [`waveform-data.js`](https://github.com/bbc/waveform-data.js) can consume it directly
-- ✅ MP3 (`libmad` + `libid3tag`) and WAV/AIFF/RAW (`libsndfile`) today; FLAC/Ogg/Opus (needs `libFLAC`/`libogg`/`libvorbis`/`libopus`) and M4A/AAC (`libfdk-aac`) planned
+- ✅ MP3 (`libmad` + `libid3tag`) and WAV/AIFF/RAW (`libsndfile`) today; FLAC/Ogg/Opus (needs `libFLAC`/`libogg`/`libvorbis`/`libopus`) and M4A/AAC (`libfaad2` — not `libfdk-aac`, which is very likely GPL-incompatible) planned
 - ❌ No CLI, no image rendering — that's `audiowaveform`'s own job, and JS's job on the consuming side
 
 See [`CLAUDE.md`](CLAUDE.md) for the full architecture and decision history.

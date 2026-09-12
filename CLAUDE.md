@@ -185,6 +185,43 @@ Decisions settled with the user (2026-09-12):
    vendors. This project's `libsndfile` build uses
    `ENABLE_EXTERNAL_LIBS=OFF` — WAV/AIFF/RAW only for now. FLAC/Ogg/Opus
    get the same "add the extra lib later" deferral as M4A, not a free ride.
+   **Correction #2 (2026-09-12): `libfdk-aac` is very likely GPL-incompatible
+   — checked its actual license text, not just its reputation.** Fetched
+   `mstorsjo/fdk-aac`'s `NOTICE` file directly: "Software License for The
+   Fraunhofer FDK AAC Codec Library," section 3, verbatim: **"NO EXPRESS OR
+   IMPLIED LICENSES TO ANY PATENT CLAIMS... ARE GRANTED BY THIS SOFTWARE
+   LICENSE."** GitHub itself can't classify it as a standard SPDX license
+   (`NOASSERTION`/"Other"). This is exactly why Debian/Fedora exclude
+   `libfdk-aac` from their main repositories — a license that explicitly
+   disclaims any patent grant doesn't satisfy GPLv3's own explicit patent-
+   grant requirements (and GPLv2 is built on the same "no additional
+   restrictions" premise), so combining it into a work distributed under
+   this project's `GPL-3.0-or-later` is a real problem, not a formality.
+   **Found a better-fitting alternative: `libfaad2`** (`knik0/faad2` on
+   GitHub, actively maintained — last push 2026-08-27). Checked its actual
+   source headers rather than trusting reputation here either:
+   `libfaad/decoder.c`'s own license header reads "either version 2 of the
+   License, or (at your option) any later version" — genuine
+   **GPL-2.0-or-later**, compatible with this project's GPL-3.0-or-later
+   (unlike a strict GPL-2.0-only component would be). Bonus: `faad2`'s own
+   `frontend/mp4read.c` (a real, ~33KB, self-contained MP4 box demuxer —
+   not a stub) is separately headed **GPL-3.0-or-later** (2017, current
+   maintainer Krzysztof Nikiel) — an exact license match with this project,
+   and it eliminates the need for a separate third-party `minimp4.h`-style
+   demuxer entirely: both the AAC decoder and the MP4 demuxer can come from
+   the same upstream project, same license family. Revised M4A plan:
+   **`libfaad2` + its own bundled `mp4read.c`**, not `libfdk-aac` + a
+   separate demuxer. One caveat carried over honestly, not solved by this
+   correction: `libfaad2`'s own license text still says "Any non-GPL usage
+   of this software or parts of this software is strictly forbidden," and
+   AAC itself remains patent-encumbered technology regardless of which
+   implementation decodes it (this is a real-world patent-licensing
+   question independent of copyright license text, and applies equally to
+   `libfdk-aac`, `libfaad2`, or FFmpeg's own AAC decoder) — not something a
+   choice of decoder library resolves, just something this correction
+   doesn't make worse and doesn't claim to fix. M4A/AAC work itself is
+   still deferred to v2 (this is research, not implementation) — no
+   `compile/libfaad2/Dockerfile` written yet.
 10. **JS API will be buffer-in/buffer-out only for v1 — no file-based
     `.dat`/`.json` save/load.** Resolves decision 8's last open bullet:
     skip `WaveformBuffer`'s file-based `save()`/`saveAsJson()`/`load()`
@@ -225,7 +262,7 @@ Decisions settled with the user (2026-09-12):
       repos/bbc/audiowaveform/tags`, pinned in the Makefile) and one
       purpose-built final module — that whole apparatus would be
       premature abstraction here. Revisit if the lib/format count grows
-      enough to justify it (e.g. once M4A's `libfdk-aac` and `libsndfile`
+      enough to justify it (e.g. once M4A's `libfaad2` and `libsndfile`
       both get added).
     - `base-image/Dockerfile`: `php-wasm-compiler`'s base image trimmed of
       everything JSPI/side-module-specific (no `emcc-for-php-wasm.sh`
@@ -414,8 +451,11 @@ user's request), the full `compile/` pipeline (decisions 12-13), and
 - ~~Track dependency + `audiowaveform` versions like `php-wasm-compiler`~~
   — done, see decision 14 (`matrix.json`, `matrix-version.mjs`,
   `update-lib-versions.mjs`).
-- M4A/AAC support (decision 9) — still deferred to v2, no `libfdk-aac`/MP4
-  demuxer work started.
+- M4A/AAC support (decision 9) — still deferred to v2. Revised plan
+  (decision 9's correction #2): `libfaad2` + its own bundled `mp4read.c`
+  demuxer (both GPL-2/3-or-later, unlike the originally-considered
+  `libfdk-aac` which is very likely GPL-incompatible). No
+  `compile/libfaad2/Dockerfile` written yet.
 - ~~Double-check `pdjson`'s license~~ — confirmed Unlicense (public domain,
   a real `UNLICENSE` file ships in `audiowaveform`'s `src/pdjson/`),
   GPL-3.0-compatible, no concern.
