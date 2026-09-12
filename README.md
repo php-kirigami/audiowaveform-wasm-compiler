@@ -29,7 +29,7 @@ Builds a waveform-peak-extraction module for the **[Kirigami](https://github.com
 
 See [`CLAUDE.md`](CLAUDE.md) for the full architecture and decision history.
 
-**Status: build pipeline authored, not yet run end-to-end.** Every Dockerfile, the `Makefile`, and the Embind wrapper exist, but no `docker build` has actually been executed against them yet — see `CLAUDE.md` for why (a concurrent build on a disk-constrained machine) and for the specific risk areas flagged for the first real build.
+**Status: builds and runs.** The full pipeline (`make audiowaveform-wasm`) produces a working `audiowaveform.wasm` + `audiowaveform.js`, smoke-tested against real audio files — see [Format support](#format-support) below and `CLAUDE.md` for the full build/debugging history.
 
 ---
 
@@ -41,6 +41,7 @@ See [`CLAUDE.md`](CLAUDE.md) for the full architecture and decision history.
   - [Requirements](#requirements)
   - [Building](#building)
   - [Usage](#usage)
+  - [Format support](#format-support)
   - [License](#license)
   - [Author](#author)
 
@@ -82,6 +83,26 @@ const peaks = module.extractMp3Peaks(mp3Bytes, 512);
 // WAV/AIFF/RAW instead of MP3:
 const wavPeaks = module.extractWavPeaks(fs.readFileSync('song.wav'), 512);
 ```
+
+---
+
+## Format support
+
+Tested 2026-09-12 against real audio (a FLAC album re-encoded to each format with `ffmpeg`), not just assumed from library capabilities:
+
+| Format | Function | Status | Notes |
+| --- | --- | --- | --- |
+| MP3 | `extractMp3Peaks` | ✅ Works | `libmad` + `libid3tag` |
+| WAV (16-bit PCM) | `extractWavPeaks` | ✅ Works | |
+| WAV (24-bit PCM) | `extractWavPeaks` | ✅ Works | |
+| WAV (32-bit float) | `extractWavPeaks` | ✅ Works | |
+| AIFF | `extractWavPeaks` | ✅ Works | |
+| FLAC | `extractWavPeaks` | ❌ Not yet | `libsndfile` built with `ENABLE_EXTERNAL_LIBS=OFF` — needs `libFLAC` vendored |
+| Ogg Vorbis | `extractWavPeaks` | ❌ Not yet | same — needs `libogg` + `libvorbis` |
+| Opus | `extractWavPeaks` | ❌ Not yet | same — needs `libogg` + `libopus` |
+| M4A/AAC | — | ❌ Not yet | needs a new decoder path entirely, planned via `libfaad2` (not `libfdk-aac` — GPL-incompatible license) — see `CLAUDE.md` |
+
+Unsupported formats fail cleanly (the function returns `null`), never crash.
 
 ---
 

@@ -9,6 +9,7 @@
 #include <emscripten/val.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 
@@ -18,6 +19,17 @@
 #include "WaveformGenerator.h"
 #include "WaveformBuffer.h"
 #include "Streams.h"
+
+// libid3tag's own public header, not part of audiowaveform's source tree —
+// installed by compile/libid3tag/Dockerfile into /root/lib/include,
+// already on the include path this file compiles with (-I /root/lib/include
+// in ../audiowaveform/Dockerfile). audiowaveform itself only uses libid3tag
+// internally to *skip past* ID3 tags before decoding (Mp3AudioFileReader's
+// private skipId3Tags()) — it never reads tag *values*. Exposing real tag
+// data (title/artist/album/...) is this project's own addition, using
+// libid3tag's public API directly, requested by the user 2026-09-12 since
+// the library is already vendored here.
+#include <id3tag.h>
 
 using namespace emscripten;
 
@@ -170,7 +182,111 @@ val extractWavPeaks(const std::string& audioBytes, int samplesPerPixel) {
     return extractPeaks(reader, audioBytes, samplesPerPixel);
 }
 
+namespace {
+
+// Separate temp path from TEMP_INPUT_PATH: harmless to share in practice
+// (JS calls are synchronous, never overlapping), but keeping them distinct
+// avoids any doubt if that ever changes.
+const char* const TEMP_ID3_PATH = "/tmp/kirigami-audiowaveform-id3-input.mp3";
+
+// Reads a single ID3v2 text-information frame (TIT2/TPE1/TALB/...) as a
+// UTF-8 JS string, or null if the frame isn't present. Every such frame
+// has the same shape: field 0 is the text encoding, field 1 is a
+// STRINGLIST holding the actual value(s) — this is libid3tag's own
+// documented convention (id3tag.h), not guessed; the same pattern real
+// consumers of this library (e.g. mpg321, various id3-tag editors) use.
+val getId3TextFrame(const id3_tag* tag, const char* frameId) {
+    const id3_frame* frame = id3_tag_findframe(tag, frameId, 0);
+
+    if (frame == nullptr || frame->nfields < 2) {
+        return val::null();
+    }
+
+    const id3_field* field = id3_frame_field(frame, 1);
+
+    if (field == nullptr) {
+        return val::null();
+    }
+
+    const id3_ucs4_t* ucs4 = id3_field_getstrings(field, 0);
+
+    if (ucs4 == nullptr) {
+        return val::null();
+    }
+
+    id3_utf8_t* utf8 = id3_ucs4_utf8duplicate(ucs4);
+
+    if (utf8 == nullptr) {
+        return val::null();
+    }
+
+    val result(std::string(reinterpret_cast<const char*>(utf8)));
+    free(utf8);
+
+    return result;
+}
+
+} // namespace
+
+// Reads ID3 tag metadata (title/artist/album/...) from an in-memory MP3
+// buffer, via libid3tag's own public API (not audiowaveform's code — see
+// the #include <id3tag.h> comment above). id3_file_open() handles both
+// ID3v1 (trailer) and ID3v2 (header) tags automatically; when both are
+// present, id3_file_tag() returns the merged/preferred one per libid3tag's
+// own logic, not something this wrapper decides.
+//
+// Returns null if no tag is present at all; otherwise an object with each
+// field either a string or null (frame not present in this particular
+// file — e.g. many files have no album artist or comment).
+//
+// TDRC (ID3v2.4) vs TYER (ID3v2.3) both mean "year" — try the newer tag
+// first, fall back to the older one, since real-world files use either
+// depending on what encoded them.
+val getId3Tags(const std::string& mp3Bytes) {
+    {
+        FILE* file = fopen(TEMP_ID3_PATH, "wb");
+
+        if (file == nullptr) {
+            return val::null();
+        }
+
+        fwrite(mp3Bytes.data(), 1, mp3Bytes.size(), file);
+        fclose(file);
+    }
+
+    id3_file* file = id3_file_open(TEMP_ID3_PATH, ID3_FILE_MODE_READONLY);
+
+    if (file == nullptr) {
+        remove(TEMP_ID3_PATH);
+        return val::null();
+    }
+
+    const id3_tag* tag = id3_file_tag(file);
+
+    val result = val::null();
+
+    if (tag != nullptr) {
+        result = val::object();
+        result.set("title", getId3TextFrame(tag, "TIT2"));
+        result.set("artist", getId3TextFrame(tag, "TPE1"));
+        result.set("album", getId3TextFrame(tag, "TALB"));
+        result.set("albumArtist", getId3TextFrame(tag, "TPE2"));
+
+        val year = getId3TextFrame(tag, "TDRC");
+        result.set("year", year.isNull() ? getId3TextFrame(tag, "TYER") : year);
+
+        result.set("track", getId3TextFrame(tag, "TRCK"));
+        result.set("genre", getId3TextFrame(tag, "TCON"));
+    }
+
+    id3_file_close(file);
+    remove(TEMP_ID3_PATH);
+
+    return result;
+}
+
 EMSCRIPTEN_BINDINGS(kirigami_audiowaveform) {
     function("extractMp3Peaks", &extractMp3Peaks);
     function("extractWavPeaks", &extractWavPeaks);
+    function("getId3Tags", &getId3Tags);
 }
