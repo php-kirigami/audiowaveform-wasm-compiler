@@ -10,6 +10,7 @@ ARG AUDIOWAVEFORM_VERSION
 
 COPY --from=kirigami-audiowaveform-wasm:libmad /root/lib /root/lib
 COPY --from=kirigami-audiowaveform-wasm:libid3tag /root/lib /root/lib
+COPY --from=kirigami-audiowaveform-wasm:libsndfile /root/lib /root/lib
 
 RUN wget "https://github.com/bbc/audiowaveform/archive/refs/tags/$AUDIOWAVEFORM_VERSION.tar.gz" -O audiowaveform.tar.gz && \
     tar xf audiowaveform.tar.gz && \
@@ -27,12 +28,15 @@ RUN cd /root/audiowaveform && git apply --no-index -v /root/no-boost-regex.patch
 
 WORKDIR /root/audiowaveform
 
-# Core file set confirmed by direct source inspection (CLAUDE.md decision
-# 8, corrected to include FileHandle — Mp3AudioFileReader depends on it
-# directly, not just optional save/load): no CLI (Main/Options/
-# OptionHandler), no PNG rendering (GdImageRenderer/Rgba/WaveformColors),
-# no CLI-only helpers (DurationCalculator/ProgressReporter/TimeUtil/
-# WavFileWriter/AudioLoader/FileFormat).
+# Core file set confirmed by direct source inspection (CLAUDE.md decisions
+# 8 and 13): no CLI (Main/Options/OptionHandler), no PNG rendering
+# (GdImageRenderer/Rgba/WaveformColors), no CLI-only helpers
+# (DurationCalculator/WavFileWriter/AudioLoader/FileFormat).
+# FileHandle (needed directly by Mp3AudioFileReader) and, once
+# SndFileAudioFileReader entered the picture, ProgressReporter/TimeUtil/
+# Array.h (needed directly by SndFileAudioFileReader, not just CLI progress
+# display the way they are for GdImageRenderer) turned out to be required
+# too — see decision 13's correction to decision 8's original file list.
 RUN source /root/emsdk/emsdk_env.sh && \
     em++ \
         -O2 \
@@ -51,9 +55,13 @@ RUN source /root/emsdk/emsdk_env.sh && \
         src/madlld-1.1p1/bstdfile.c \
         src/Error.cpp \
         src/FileHandle.cpp \
+        src/FileUtil.cpp \
         src/Log.cpp \
         src/MathUtil.cpp \
         src/Mp3AudioFileReader.cpp \
+        src/ProgressReporter.cpp \
+        src/SndFileAudioFileReader.cpp \
+        src/TimeUtil.cpp \
         src/WaveformBuffer.cpp \
         src/pdjson/pdjson.c \
         src/WaveformGenerator.cpp \
@@ -61,4 +69,5 @@ RUN source /root/emsdk/emsdk_env.sh && \
         src/WaveformUtil.cpp \
         /root/lib/lib/libmad.a \
         /root/lib/lib/libid3tag.a \
+        /root/lib/lib/libsndfile.a \
         -o /root/out/audiowaveform.js

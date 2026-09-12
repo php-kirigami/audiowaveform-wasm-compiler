@@ -24,7 +24,7 @@ Builds a waveform-peak-extraction module for the **[Kirigami](https://github.com
 - ✅ **Node.js** only, no browser target
 - ✅ One monolithic wasm module — no JSPI, no Asyncify, no dylink side-modules (peak extraction is synchronous, CPU-bound work)
 - ✅ Buffer in, JS object out — output shaped like `audiowaveform`'s own documented peaks format, so [`waveform-data.js`](https://github.com/bbc/waveform-data.js) can consume it directly
-- ✅ MP3 today (`libmad` + `libid3tag`); WAV/FLAC/Ogg/Opus (`libsndfile`) and M4A/AAC (`libfdk-aac`) planned
+- ✅ MP3 (`libmad` + `libid3tag`) and WAV/AIFF/RAW (`libsndfile`) today; FLAC/Ogg/Opus (needs `libFLAC`/`libogg`/`libvorbis`/`libopus`) and M4A/AAC (`libfdk-aac`) planned
 - ❌ No CLI, no image rendering — that's `audiowaveform`'s own job, and JS's job on the consuming side
 
 See [`CLAUDE.md`](CLAUDE.md) for the full architecture and decision history.
@@ -62,7 +62,7 @@ make base-image
 make audiowaveform-wasm
 ```
 
-Output lands in `node-builds/`. Library versions (`libmad`, `libid3tag`, `audiowaveform` itself) are pinned directly in [`compile/Makefile`](compile/Makefile) — no `config.yaml`/CLI wrapper yet (see `CLAUDE.md` for why that's deliberate at this project's current size).
+Output lands in `node-builds/`. Library versions (`libmad`, `libid3tag`, `libsndfile`, `audiowaveform` itself) are tracked in [`matrix.json`](matrix.json) — refresh with `node compile/update-lib-versions.mjs --write` — and resolved into the build automatically via `compile/Makefile`. No `config.yaml`/interactive CLI wrapper yet (see `CLAUDE.md` for why that's deliberate at this project's current size).
 
 ---
 
@@ -78,6 +78,9 @@ const mp3Bytes = fs.readFileSync('song.mp3');
 const peaks = module.extractMp3Peaks(mp3Bytes, 512);
 // { version: 2, channels: 2, sample_rate: 44100, samples_per_pixel: 512,
 //   bits: 16, length: 1234, data: [...] }
+
+// WAV/AIFF/RAW instead of MP3:
+const wavPeaks = module.extractWavPeaks(fs.readFileSync('song.wav'), 512);
 ```
 
 ---

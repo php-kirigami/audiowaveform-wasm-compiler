@@ -178,12 +178,23 @@ Decisions settled with the user (2026-09-12):
    subclasses) so adding `M4aAudioFileReader` later is additive, not a
    redesign. Not yet started: no `libfdk-aac`/MP4-demuxer research beyond
    naming the two candidate approaches.
+   **Correction (2026-09-12, while actually wiring up `libsndfile`,
+   decision 13):** "at no extra architectural cost" for FLAC/Ogg/Opus was
+   wrong. `libsndfile` only reads those formats when built against
+   `libFLAC`/`libogg`/`libvorbis`/`libopus`, none of which this project
+   vendors. This project's `libsndfile` build uses
+   `ENABLE_EXTERNAL_LIBS=OFF` — WAV/AIFF/RAW only for now. FLAC/Ogg/Opus
+   get the same "add the extra lib later" deferral as M4A, not a free ride.
 10. **JS API will be buffer-in/buffer-out only for v1 — no file-based
     `.dat`/`.json` save/load.** Resolves decision 8's last open bullet:
-    skip `FileHandle.cpp`/`FileUtil.cpp` from the extracted core. Simpler,
-    and fits a Node API better than routing through the wasm virtual
-    filesystem; revisit if a file-based mode turns out to be genuinely
-    useful later.
+    skip `WaveformBuffer`'s file-based `save()`/`saveAsJson()`/`load()`
+    methods, using its plain in-memory accessors instead (decision 12's
+    `binding.cpp`). Simpler, and fits a Node API better than routing
+    through the wasm virtual filesystem; revisit if a file-based mode
+    turns out to be genuinely useful later. (`FileHandle.cpp`/`FileUtil.cpp`
+    turned out to be required in the core anyway, for unrelated reasons —
+    see decisions 8 and 13's corrections — so this decision is narrower
+    than it originally sounded.)
 11. **Deliberately not running any `docker build`/`make` yet, even though
     the Dockerfiles/Makefile below got written (2026-09-12).** Checked
     free disk space on `C:` before starting this work:  only **8.6GB
@@ -293,63 +304,149 @@ Decisions settled with the user (2026-09-12):
       first real `make`/`docker build`, not a confirmed working build the
       way `php-wasm-compiler`'s equivalent decisions are.
 
+13. **`libsndfile` (WAV/AIFF/RAW) wired in, and a real correction to
+    decision 8's core file list found while doing it (2026-09-12).** Before
+    writing `compile/libsndfile/Dockerfile`, read `SndFileAudioFileReader.h`/
+    `.cpp` directly rather than assuming it was as self-contained as
+    `Mp3AudioFileReader` — good thing, because it isn't:
+    `SndFileAudioFileReader.cpp` unconditionally instantiates a
+    `ProgressReporter` inside `run()` and calls `FileUtil::isStdioFilename()`/
+    `FileUtil::getInputFilename()` inside `open()`. Decision 8 had marked
+    `ProgressReporter`/`TimeUtil` "confirmed excluded, CLI-only" — true for
+    the MP3-only path (`Mp3AudioFileReader` never touches either), false
+    once `SndFileAudioFileReader` is in the link set: `ProgressReporter.cpp`
+    itself pulls in `Array.h` (header-only, no `.cpp`) and `TimeUtil.cpp`.
+    All confirmed lightweight on inspection (`FileUtil.cpp`: `<fstream>`/
+    `<sys/stat.h>`, no boost; `TimeUtil.cpp`: just `<cstdio>`) — no new
+    cross-compiled dependency, just more files in the `em++` command.
+    Corrected `compile/audiowaveform/Dockerfile`'s file list and its
+    explanatory comment accordingly; `compile/src/binding.cpp` gained
+    `extractWavPeaks()` alongside `extractMp3Peaks()`, sharing a common
+    `extractPeaks(AudioFileReader&, bytes, samplesPerPixel)` helper (both
+    readers get staged into MEMFS the same way — libsndfile auto-detects
+    format from the file header, not a filename extension, so one fixed
+    temp path serves both).
+    - `compile/libsndfile/Dockerfile`: CMake-based (libsndfile 1.1+ dropped
+      autotools), `emcmake`/`emmake`, `ENABLE_EXTERNAL_LIBS=OFF` (see
+      decision 9's correction above — no FLAC/Ogg/Opus yet) and
+      `ENABLE_MPEG=OFF` (libsndfile can optionally read/write MP3 via
+      `mpg123`/`lame`; deliberately not enabled since this project already
+      has a real MP3 path via `libmad`/`libid3tag` and vendoring a second,
+      redundant MP3 codec stack would be pure waste).
+    - Also not yet compiled/tested — same status as the rest of decision 12.
+
+14. **Adopted `php-wasm-compiler`'s `matrix.json`/version-tracking
+    mechanism after all, reversing part of decision 12 (2026-09-12,
+    explicit user request: "on va tracker les versions des dépendances et
+    du projet audiowaveform de bbc en tant que tel").** Decision 12 argued
+    the full `config.yaml`/`matrix.json`/`cli.mjs` apparatus was premature
+    for two fixed-version libraries — still true for the CLI/config-file
+    part, but the user specifically wants the *version-tracking* half
+    (`matrix.json` + a "check for latest" script) regardless of how few
+    libraries exist today, applied to `audiowaveform` itself, not only its
+    C dependencies. Added:
+    - `matrix.json` (repo root): a `libraries` map covering `audiowaveform`
+      itself (`sourceType: "github-release"`, repo `bbc/audiowaveform`,
+      real tags, latest `1.10.3`), `libmad`/`libid3tag` (`sourceType:
+      "tarball"`, fixed `0.15.1b` pins — explicitly documented as having no
+      real "latest" to track, unlike the others, per decision 12's
+      research), and `libsndfile` (`sourceType: "github-release"`, latest
+      `1.2.2`). Treating `audiowaveform` as just another `libraries` entry
+      (rather than inventing a separate top-level key for "the tool itself
+      vs. its dependencies") was a deliberate simplicity choice — it lets
+      `update-lib-versions.mjs` handle it with zero special-casing.
+    - `compile/matrix-version.mjs` and `compile/update-lib-versions.mjs`:
+      ported from `php-wasm-compiler` (same mechanism, `getMatrixVersion()`
+      reads a library's `versions[]` last entry; the updater queries GitHub
+      releases/tags for `github-release`/`github-tag` sourceTypes and
+      appends newly-found versions). **Both actually run and verified
+      working** (pure network + local file I/O, no Docker/disk risk, safe
+      to run even under decision 11's constraint):
+      `node compile/update-lib-versions.mjs` correctly reported everything
+      already up to date, and `node compile/matrix-version.mjs <key>`
+      correctly resolved all four entries.
+    - `compile/Makefile`: `LIBMAD_VERSION`/`LIBID3TAG_VERSION`/
+      `LIBSNDFILE_VERSION`/`AUDIOWAVEFORM_VERSION` now all resolve via a
+      `MATRIX_VERSION` macro (identical mechanism to
+      `php-wasm-compiler/compile/Makefile`'s own) instead of hardcoded
+      literals. Verified with `make -n` (dry-run) that every target
+      resolves the exact same versions matrix.json records, without
+      needing an actual build.
+    - Left alone deliberately: `config.yaml`/`cli.mjs` (decision 12's other
+      half) — the user's request was specifically about version tracking,
+      not the interactive-CLI/config-file layer. Revisit that separately if
+      asked.
+
 ## Current status
 
-**Scaffolding + a full, unbuilt Docker/Emscripten pipeline (2026-09-12).**
-Created while `php-wasm-compiler`'s build pipeline runs in parallel, per
-the user's request to start this project in the meantime — and, once that
-concurrent build revealed this machine only has 8.6GB free on `C:`
-(decision 11), deliberately kept to *authoring* (Dockerfiles, Makefile,
-the Embind wrapper, a real generated-and-verified patch) rather than
-*running* anything, to avoid competing for disk/RAM with the PHP build.
-Repo initialized, `LICENSE` (GPL-3.0), this file, `README.md`, and the
-full `compile/` pipeline described in decision 12. GitHub remote not yet
-created — see the note below.
+**Scaffolding + a full, unbuilt Docker/Emscripten pipeline, now with
+version tracking (2026-09-12).** Created while `php-wasm-compiler`'s build
+pipeline runs (on and off) in parallel, per the user's request to start
+this project in the meantime — and, once that concurrent build revealed
+this machine only has 8.6GB free on `C:` (decision 11), deliberately kept
+to *authoring* (Dockerfiles, Makefile, the Embind wrapper, a real
+generated-and-verified patch, `matrix.json` + its version-checking
+scripts) rather than *running* anything build-heavy, to avoid competing
+for disk/RAM with the PHP build. The two pure-Node scripts
+(`matrix-version.mjs`, `update-lib-versions.mjs`) are the one exception —
+network + local file I/O only, no Docker/disk cost, and both have actually
+been run and verified working (decision 14). Repo initialized and pushed
+to `https://github.com/php-kirigami/audiowaveform-wasm-compiler`; `LICENSE`
+(GPL-3.0), this file, `README.md` (rewritten to follow the Kirigami
+ecosystem's README convention — logo, badges, Table of contents — per the
+user's request), the full `compile/` pipeline (decisions 12-13), and
+`matrix.json` (decision 14) are all in place.
 
 **Not yet done / open questions:**
 
 - Run the actual build for the first time once `php-wasm-compiler`'s
   build finishes and disk headroom is confirmed again (decision 11) —
-  resolves every "not yet verified" flag left in decision 12's Dockerfiles
-  (libmad's FPM selection, libid3tag/zlib, the full link step).
+  resolves every "not yet verified" flag left in decisions 12-13's
+  Dockerfiles (libmad's FPM selection, libid3tag/zlib, the full link step).
 - ~~Read `audiowaveform`'s actual source tree to confirm the boost
   dependency scope of the core~~ — done, see decision 8.
 - ~~Decide MP3-only vs. multi-format (libsndfile) for v1~~ — resolved by
-  decision 9 (MP3 primary; `libsndfile` formats included in the core file
-  list but **not yet wired into the Makefile/Dockerfiles** — only
-  `libmad`/`libid3tag` have actual build plumbing so far, `SndFileAudioFileReader`
-  wiring is still a TODO, not done despite decision 9's framing).
+  decision 9 (MP3 primary) and **wired in** by decision 13 (`libsndfile`
+  Dockerfile + Makefile target + `extractWavPeaks()` in `binding.cpp`,
+  WAV/AIFF/RAW only — FLAC/Ogg/Opus deferred, see decision 9's correction).
 - ~~Decide whether the JS API needs file-based save/load~~ — resolved by
   decision 10 (buffer-only for v1).
+- ~~Track dependency + `audiowaveform` versions like `php-wasm-compiler`~~
+  — done, see decision 14 (`matrix.json`, `matrix-version.mjs`,
+  `update-lib-versions.mjs`).
 - M4A/AAC support (decision 9) — still deferred to v2, no `libfdk-aac`/MP4
   demuxer work started.
-- Double-check `pdjson`'s license before vendoring (decision 8) — not yet
-  confirmed, though it's a small, widely-reused JSON library.
-- ~~Design the actual Embind API surface~~ — a first version exists,
-  `extractMp3Peaks()` in decision 12's `binding.cpp`, but it's untested
-  and likely to need real API-shape iteration once actually compiled and
-  exercised from Node (parameter names, whether `PixelsPerSecondScaleFactor`
-  should be exposed as an alternative to `samplesPerPixel`, whether
-  `WaveformRescaler` should be a separate bound function, etc.).
+- ~~Double-check `pdjson`'s license~~ — confirmed Unlicense (public domain,
+  a real `UNLICENSE` file ships in `audiowaveform`'s `src/pdjson/`),
+  GPL-3.0-compatible, no concern.
+- ~~Design the actual Embind API surface~~ — `extractMp3Peaks()` and
+  `extractWavPeaks()` exist in decision 12/13's `binding.cpp`, but both are
+  untested and likely to need real API-shape iteration once actually
+  compiled and exercised from Node (parameter names, whether
+  `PixelsPerSecondScaleFactor` should be exposed as an alternative to
+  `samplesPerPixel`, whether `WaveformRescaler` should be a separate bound
+  function, etc.).
 - Repo/package naming: this repo is `audiowaveform-wasm-compiler`
   (matching `php-wasm-compiler`'s naming pattern); the published npm
   package name is not yet decided (candidate: `@kirigami/audiowaveform-wasm`).
-- GitHub remote: **not created yet, blocked** — Claude Code's own
-  auto-mode classifier refuses `gh repo create` for a new *public* repo
-  ("Create Public Surface"), even though the target
-  (`php-kirigami/audiowaveform-wasm-compiler`, same org as
-  `php-wasm-compiler`/`kirigami`/`kiribuild`, confirmed via `gh api
-  user/orgs` — there is no separate "Kirigami" org) is correct and the
-  user asked for it twice. User offered to create the empty repo
-  themselves (2026-09-12); once it exists, this session still needs to
-  `git remote add origin` + push the local commits.
+- ~~GitHub remote~~ — **created and pushed 2026-09-12**:
+  `https://github.com/php-kirigami/audiowaveform-wasm-compiler`. Claude
+  Code's own auto-mode classifier had refused `gh repo create` for a new
+  *public* repo directly ("Create Public Surface"); the user created the
+  (empty, un-initialized-with-README) repo themselves, this session then
+  `git remote add origin` + `git push -u origin main`'d the local history.
+  One hiccup: GitHub had actually auto-initialized it with a one-line
+  placeholder `README.md` despite being asked not to — resolved with
+  `git fetch` + `git rebase origin/main` (keeping this repo's fuller
+  README on conflict) rather than a force-push.
 - No `compile/cli.mjs`-equivalent entry point yet — decision 12
-  deliberately skipped that whole apparatus for now (two fixed-version
-  libs, no config matrix to drive). The Makefile is invoked directly
-  (`make audiowaveform-wasm`) rather than through a Node CLI wrapper.
-  Revisit once/if the project's scope (M4A, multi-format, a real "latest"
-  checker for `audiowaveform` itself) grows enough to justify one.
-- `libsndfile` (decision 9's WAV/FLAC/Ogg/Opus support) has no
-  `compile/libsndfile/Dockerfile` and isn't wired into the Makefile or
-  `audiowaveform/Dockerfile`'s em++ command yet — only the MP3 path
-  (`libmad`/`libid3tag`) has real build plumbing so far.
+  deliberately skipped the interactive-CLI/config-file apparatus for now
+  (two fixed-version libs, no config matrix to drive); decision 14 only
+  added the version-*tracking* half (`matrix-version.mjs`/
+  `update-lib-versions.mjs` as standalone scripts, not a unified CLI). The
+  Makefile is invoked directly (`make audiowaveform-wasm`) rather than
+  through a Node CLI wrapper. Revisit once/if the project's scope (M4A,
+  more formats) grows enough to justify one.
+- ~~`libsndfile` not wired in~~ — done, see decision 13 (WAV/AIFF/RAW
+  only; FLAC/Ogg/Opus still need `libFLAC`/`libogg`/`libvorbis`/`libopus`
+  vendored, per decision 9's correction).

@@ -1,0 +1,41 @@
+{
+	"$comment": "Version/source matrix for this project's third-party libraries AND for bbc/audiowaveform itself (the tool being compiled — tracked the same way as a dependency, per the user's explicit request 2026-09-12 to mirror php-wasm-compiler's matrix.json/update-lib-versions.mjs mechanism here too, see CLAUDE.md). 'latest' resolves to the last entry of a library's 'versions' array (compile/Makefile reads it via matrix-version.mjs's MATRIX_VERSION macro). Refresh with `node compile/update-lib-versions.mjs --write`.",
+	"libraries": {
+		"audiowaveform": {
+			"sourceType": "github-release",
+			"repo": "bbc/audiowaveform",
+			"sourceTemplate": "https://github.com/bbc/audiowaveform/archive/refs/tags/{version}.tar.gz",
+			"note": "The tool this whole project extracts and compiles, not a C dependency — included here anyway so it gets the same version-tracking treatment. Verified via `gh api repos/bbc/audiowaveform/tags` 2026-09-12: real, actively maintained tags (unlike libmad/libid3tag below).",
+			"versions": [
+				"1.10.3"
+			]
+		},
+		"libmad": {
+			"sourceType": "tarball",
+			"sourceTemplate": "https://sourceforge.net/projects/mad/files/libmad/{version}/libmad-{version}.tar.gz/download",
+			"checkUrl": "https://sourceforge.net/projects/mad/files/libmad/",
+			"note": "Last real upstream release, 2004 (SourceForge \"mad\" project). Verified 2026-09-12 via `gh api repos/markjeee/libmad` that the unofficial GitHub mirror has zero tags — there is no \"latest\" to track here, this is a fixed pin against a dead upstream, unlike audiowaveform/libsndfile below. update-lib-versions.mjs skips this entry (sourceType \"tarball\", not github-release/github-tag).",
+			"versions": [
+				"0.15.1b"
+			]
+		},
+		"libid3tag": {
+			"sourceType": "tarball",
+			"sourceTemplate": "https://sourceforge.net/projects/mad/files/libid3tag/{version}/libid3tag-{version}.tar.gz/download",
+			"checkUrl": "https://sourceforge.net/projects/mad/files/libid3tag/",
+			"note": "Same SourceForge \"mad\" project and dead-upstream situation as libmad above.",
+			"versions": [
+				"0.15.1b"
+			]
+		},
+		"libsndfile": {
+			"sourceType": "github-release",
+			"repo": "libsndfile/libsndfile",
+			"sourceTemplate": "https://github.com/libsndfile/libsndfile/releases/download/{version}/libsndfile-{version}.tar.xz",
+			"note": "WAV/AIFF/RAW only in this project's build (ENABLE_EXTERNAL_LIBS=OFF, ENABLE_MPEG=OFF — see compile/libsndfile/Dockerfile). FLAC/Ogg-Vorbis/Opus support would need libFLAC/libogg/libvorbis/libopus vendored too, deferred (CLAUDE.md decision 9's correction).",
+			"versions": [
+				"1.2.2"
+			]
+		}
+	}
+}
