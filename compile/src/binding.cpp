@@ -226,14 +226,30 @@ val getId3TextFrame(const id3_tag* tag, const char* frameId) {
     return result;
 }
 
+// Shared by getId3Tags() and getId3CoverArt(): stage bytes into MEMFS,
+// open via libid3tag. id3_file_open() handles both ID3v1 (trailer) and
+// ID3v2 (header) tags automatically; when both are present, id3_file_tag()
+// returns the merged/preferred one per libid3tag's own logic, not
+// something this wrapper decides. Caller must id3_file_close() the result
+// (if non-null) and remove(TEMP_ID3_PATH) when done.
+id3_file* openId3File(const std::string& mp3Bytes) {
+    FILE* file = fopen(TEMP_ID3_PATH, "wb");
+
+    if (file == nullptr) {
+        return nullptr;
+    }
+
+    fwrite(mp3Bytes.data(), 1, mp3Bytes.size(), file);
+    fclose(file);
+
+    return id3_file_open(TEMP_ID3_PATH, ID3_FILE_MODE_READONLY);
+}
+
 } // namespace
 
 // Reads ID3 tag metadata (title/artist/album/...) from an in-memory MP3
 // buffer, via libid3tag's own public API (not audiowaveform's code — see
-// the #include <id3tag.h> comment above). id3_file_open() handles both
-// ID3v1 (trailer) and ID3v2 (header) tags automatically; when both are
-// present, id3_file_tag() returns the merged/preferred one per libid3tag's
-// own logic, not something this wrapper decides.
+// the #include <id3tag.h> comment above).
 //
 // Returns null if no tag is present at all; otherwise an object with each
 // field either a string or null (frame not present in this particular
@@ -243,18 +259,7 @@ val getId3TextFrame(const id3_tag* tag, const char* frameId) {
 // first, fall back to the older one, since real-world files use either
 // depending on what encoded them.
 val getId3Tags(const std::string& mp3Bytes) {
-    {
-        FILE* file = fopen(TEMP_ID3_PATH, "wb");
-
-        if (file == nullptr) {
-            return val::null();
-        }
-
-        fwrite(mp3Bytes.data(), 1, mp3Bytes.size(), file);
-        fclose(file);
-    }
-
-    id3_file* file = id3_file_open(TEMP_ID3_PATH, ID3_FILE_MODE_READONLY);
+    id3_file* file = openId3File(mp3Bytes);
 
     if (file == nullptr) {
         remove(TEMP_ID3_PATH);
@@ -285,8 +290,81 @@ val getId3Tags(const std::string& mp3Bytes) {
     return result;
 }
 
+// Reads the embedded cover art (ID3v2 APIC frame) from an in-memory MP3
+// buffer, if present. Field layout confirmed directly from libid3tag's own
+// frametype.c (FIELDS(APIC) = TEXTENCODING, LATIN1, INT8, STRING,
+// BINARYDATA — not guessed): field 1 is the MIME type, field 2 the
+// ID3v2-defined picture type (3 = front cover, 4 = back cover, 0 = other,
+// etc. — see the ID3v2 spec's APIC frame description for the full list),
+// field 4 the raw image bytes.
+//
+// Returns null if there's no APIC frame; otherwise
+// { mimeType, pictureType, data } where `data` is a plain array of byte
+// values (0-255) — deliberately not a typed_memory_view, since the
+// underlying bytes belong to the id3_frame and don't outlive
+// id3_file_close() below; copying into a plain JS-owned array up front
+// avoids any doubt about buffer lifetime, at the cost of being less
+// memory-efficient for large cover art than a real Uint8Array would be.
+val getId3CoverArt(const std::string& mp3Bytes) {
+    id3_file* file = openId3File(mp3Bytes);
+
+    if (file == nullptr) {
+        remove(TEMP_ID3_PATH);
+        return val::null();
+    }
+
+    const id3_tag* tag = id3_file_tag(file);
+    val result = val::null();
+
+    if (tag != nullptr) {
+        const id3_frame* frame = id3_tag_findframe(tag, "APIC", 0);
+
+        if (frame != nullptr && frame->nfields >= 5) {
+            const id3_field* mimeField = id3_frame_field(frame, 1);
+            const id3_field* typeField = id3_frame_field(frame, 2);
+            const id3_field* dataField = id3_frame_field(frame, 4);
+
+            id3_length_t length = 0;
+            const id3_byte_t* bytes = dataField != nullptr
+                ? id3_field_getbinarydata(dataField, &length)
+                : nullptr;
+
+            if (bytes != nullptr) {
+                val data = val::array();
+
+                for (id3_length_t i = 0; i < length; ++i) {
+                    data.set(i, bytes[i]);
+                }
+
+                const id3_latin1_t* mime = mimeField != nullptr
+                    ? id3_field_getlatin1(mimeField)
+                    : nullptr;
+
+                result = val::object();
+                result.set(
+                    "mimeType",
+                    mime != nullptr
+                        ? val(std::string(reinterpret_cast<const char*>(mime)))
+                        : val::null()
+                );
+                result.set(
+                    "pictureType",
+                    typeField != nullptr ? static_cast<int>(id3_field_getint(typeField)) : 0
+                );
+                result.set("data", data);
+            }
+        }
+    }
+
+    id3_file_close(file);
+    remove(TEMP_ID3_PATH);
+
+    return result;
+}
+
 EMSCRIPTEN_BINDINGS(kirigami_audiowaveform) {
     function("extractMp3Peaks", &extractMp3Peaks);
     function("extractWavPeaks", &extractWavPeaks);
     function("getId3Tags", &getId3Tags);
+    function("getId3CoverArt", &getId3CoverArt);
 }
