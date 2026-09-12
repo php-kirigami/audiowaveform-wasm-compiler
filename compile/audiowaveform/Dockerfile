@@ -37,12 +37,23 @@ WORKDIR /root/audiowaveform
 # Array.h (needed directly by SndFileAudioFileReader, not just CLI progress
 # display the way they are for GdImageRenderer) turned out to be required
 # too — see decision 13's correction to decision 8's original file list.
+# -isystem /usr/include: confirmed on the first real build that emcc's
+# cross-compiler sysroot doesn't see the host Linux system's headers by
+# default (correct behavior for a real cross-compiler in general — avoids
+# picking up host-architecture-specific headers), even though
+# base-image/Dockerfile's `apt install libboost-dev` genuinely does put
+# boost/format.hpp at /usr/include/boost/format.hpp (verified directly:
+# `docker run ... find / -iname format.hpp` finds it). Since we only use
+# header-only boost::format (decision 8 — no compiled Boost component is
+# linked), exposing the host's /usr/include for parsing is safe here; a
+# real ABI-affecting header would not be.
 RUN source /root/emsdk/emsdk_env.sh && \
     em++ \
         -O2 \
         -std=c++11 \
         -I src \
         -I /root/lib/include \
+        -isystem /usr/include \
         -s ENVIRONMENT=node \
         -s ALLOW_MEMORY_GROWTH=1 \
         -s MODULARIZE=1 \
