@@ -2,8 +2,6 @@
 # CLAUDE.md decision 4/8, we extract, not fork), compiles only the
 # confirmed-minimal core file set, links against libmad/libid3tag, and
 # adds our own Embind wrapper (src/binding.cpp).
-#
-# NOT YET BUILT (CLAUDE.md decision 11).
 FROM kirigami-audiowaveform-wasm:base
 
 ARG AUDIOWAVEFORM_VERSION
@@ -56,6 +54,8 @@ WORKDIR /root/audiowaveform
 # failed to resolve an #include — so emcc's own libc headers still win,
 # and only `boost/*` (which doesn't exist in emcc's sysroot at all) falls
 # through to the host path.
+RUN mkdir -p /root/out
+
 RUN source /root/emsdk/emsdk_env.sh && \
     em++ \
         -O2 \
