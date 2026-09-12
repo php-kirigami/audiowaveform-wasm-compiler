@@ -24,10 +24,12 @@ RUN wget "https://sourceforge.net/projects/mad/files/libid3tag/$LIBID3TAG_VERSIO
 COPY ./patches/libid3tag/config.sub-wasm32-emscripten.patch /root/config.sub.patch
 RUN cd /root/libid3tag && git apply --no-index -v /root/config.sub.patch
 
-# CFLAGS="-O2": added preemptively, not yet confirmed necessary for this
-# lib specifically — libmad (same project, same era) hit clang rejecting
-# its configure's default GCC-specific optimization flags outright, see
-# compile/libmad/Dockerfile's comment for the exact flags and why.
+# CFLAGS="-DNDEBUG": same fix as compile/libmad/Dockerfile, for the same
+# reason — confirmed by reading libid3tag's own configure.ac, which has
+# the identical hand-written `set -- $CFLAGS` / `optimize=` argument-
+# parsing pattern that traps a bare "-O2" (or autoconf's own unset-CFLAGS
+# "-g -O2" default) into a set of GCC-specific flags clang/emcc rejects.
+# See libmad/Dockerfile's comment for the full mechanism.
 RUN source /root/emsdk/emsdk_env.sh && \
     cd /root/libid3tag && \
     emconfigure ./configure \
@@ -35,6 +37,6 @@ RUN source /root/emsdk/emsdk_env.sh && \
         --prefix=/root/lib \
         --disable-shared \
         --enable-static \
-        CFLAGS="-O2" && \
+        CFLAGS="-DNDEBUG" && \
     emmake make && \
     emmake make install

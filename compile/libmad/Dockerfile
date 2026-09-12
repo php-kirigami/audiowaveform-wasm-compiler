@@ -30,15 +30,22 @@ RUN wget "https://sourceforge.net/projects/mad/files/libmad/$LIBMAD_VERSION/libm
 COPY ./patches/libmad/config.sub-wasm32-emscripten.patch /root/config.sub.patch
 RUN cd /root/libmad && git apply --no-index -v /root/config.sub.patch
 
-# CFLAGS="-O2": libmad's configure, when it detects a gcc-like compiler,
-# hardcodes a set of GCC-specific 1990s-era optimization flags
+# CFLAGS="-DNDEBUG": libmad's own configure.ac has a hand-written
+# argument-parsing loop (predates/wraps the standard autoconf one) that
+# does `set -- $CFLAGS` and specifically intercepts a bare `-O2` token
+# (mapping it to `optimize="-O"`) or any `-O*`/`-f*`-looking token,
+# triggering a hardcoded set of GCC-specific 1990s-era optimization flags
 # (-fforce-mem, -fforce-addr, -fthread-jumps, -fcse-follow-jumps,
-# -fcse-skip-blocks, -fregmove, ...) into the generated Makefile's CFLAGS.
-# clang (which emcc wraps) rejects several of these outright ("unknown
-# argument") rather than just warning — confirmed on the first real build.
-# Passing CFLAGS explicitly here overrides that autodetected default
-# (autoconf only fills in its own default when the CFLAGS env var isn't
-# already set).
+# -fcse-skip-blocks, -fregmove, ...) — clang (which emcc wraps) rejects
+# several of these outright ("unknown argument"). This is why passing
+# CFLAGS="-O2" here (an earlier attempt) made no difference: it fed
+# straight into the same trap that autoconf's own unset-CFLAGS default
+# (also "-g -O2"-shaped) already falls into — confirmed by reading
+# configure.ac directly, not guessed. The fix is to give CFLAGS a value
+# that (a) isn't empty, so autoconf's own gcc-detected "-g -O2" default
+# never applies, and (b) doesn't start with -O/-f/-m/-g, so libmad's own
+# parsing loop routes it to its harmless catch-all branch instead of
+# building `optimize`. `-DNDEBUG` satisfies both.
 RUN source /root/emsdk/emsdk_env.sh && \
     cd /root/libmad && \
     emconfigure ./configure \
@@ -46,6 +53,6 @@ RUN source /root/emsdk/emsdk_env.sh && \
         --prefix=/root/lib \
         --disable-shared \
         --enable-static \
-        CFLAGS="-O2" && \
+        CFLAGS="-DNDEBUG" && \
     emmake make && \
     emmake make install
