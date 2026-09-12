@@ -67,6 +67,90 @@ Decisions settled with the user (2026-09-12):
    decoding (the plugin's primary use case, per decision on scope: "un
    plugin de lecteur mp3"). `libsndfile` (WAV/FLAC/etc.) is a maybe —
    not yet decided whether v1 needs more than MP3 support.
+8. **Boost dependency scope confirmed by actually reading the source
+   (2026-09-12) — resolves decision 4's open question: the extractable
+   core needs zero *compiled* Boost libraries, only (optionally) one
+   header-only one.** Cloned `bbc/audiowaveform` to a scratchpad and
+   grepped every `boost::` usage against the real `add_executable(audiowaveform
+   ${SRCS})` file list in `CMakeLists.txt`:
+   - `boost::program_options` / `boost::filesystem` (the two heaviest,
+     *compiled* Boost components CMake requires): confirmed used only in
+     `Options.cpp`/`OptionHandler.cpp`/`Main.cpp` — pure CLI, entirely
+     excluded by decision 4.
+   - `boost::regex` (also compiled, not header-only): used in exactly two
+     places, both excludable — `MathUtil::parseNumber` (only called from
+     `Options.cpp`, CLI numeric-arg parsing) and `RGBA::parse` (only used
+     by `GdImageRenderer.cpp`/`Options.cpp`/`WaveformColors.cpp`, all
+     PNG-rendering/CLI-color-option code, decision 4's `libgd` exclusion).
+     Neither the regex patterns nor the functions using them are reachable
+     from the peak-generation path — **zero compiled Boost libraries need
+     cross-compiling to wasm**, unlike every other Boost-touching part of
+     this repo's cousin `php-wasm-builder` fork history.
+   - `boost::format` (header-only, no link step) and `boost::to_lower_copy`
+     (header-only `Boost.StringAlgo`): still appear in a few core-adjacent
+     files (`Error.h`/`.cpp`, `WaveformBuffer.cpp`, `WaveformGenerator.cpp`
+     use `boost::format` for exception messages; `FileFormat.cpp` uses
+     `to_lower_copy` to normalize a CLI-supplied format string — that file
+     itself is CLI-only and excluded). Decision: **keep `boost::format`
+     as-is** in the extracted core rather than replacing it with
+     `std::ostringstream` — since it's header-only, the Docker build only
+     needs Boost's headers available (e.g. `apt install libboost-dev` in
+     the base image), no separate `compile/libboost/Dockerfile` or
+     cross-compiled `.a` the way every other third-party lib in this
+     pipeline needs. Genuinely the cheapest possible Boost dependency.
+   - **Concrete minimal core file set identified** (peak extraction only,
+     no CLI, no PNG rendering), cross-checked against `CMakeLists.txt`'s
+     real source list and each file's actual callers/callees:
+     - `AudioFileReader.cpp/.h` (abstract base), `AudioProcessor.cpp/.h`
+       (processor interface `WaveformGenerator` implements).
+     - `Mp3AudioFileReader.cpp/.h` (needs `libmad` + `libid3tag`) +
+       `BStdFile.cpp/.h` + `madlld-1.1p1/bstdfile.c` (the buffered-I/O
+       adapter feeding libmad — confirmed actually compiled via
+       `CMakeLists.txt`'s `MODULES` list, not just reference code sitting
+       next to it).
+     - `SndFileAudioFileReader.cpp/.h` (needs `libsndfile`) — only if v1
+       supports non-MP3 input (decision 7, still open).
+     - `VectorAudioFileReader.cpp/.h` (reads from an in-memory
+       `std::vector<short>` instead of a file path — likely directly
+       useful for a buffer-in JS API rather than something to route
+       around).
+     - `WaveformGenerator.cpp/.h` (the actual min/max peak-generation
+       algorithm — the whole point of this project).
+     - `WaveformBuffer.cpp/.h` + `pdjson/pdjson.c` (peaks storage +
+       binary-`.dat`/JSON serialization via a small vendored JSON writer,
+       license not yet double-checked — this is the file that directly
+       produces the `waveform-data.js`-compatible format from decision 6).
+     - `WaveformRescaler.cpp/.h` (rescales a peaks buffer to a different
+       zoom level/resolution — a genuinely reusable core feature, not
+       CLI-specific, worth exposing in the JS API too).
+     - `WaveformUtil.cpp/.h` (amplitude-range helper, needs
+       `MathUtil::scale`).
+     - `MathUtil.cpp/.h`, **trimmed**: keep `scale`/`clamp`/
+       `roundUpToNearest`/`roundDownToNearest`, drop `parseNumber` (and
+       with it, the file's only `boost::regex` include) since it has
+       exactly one caller and it's CLI-only.
+     - `Error.cpp/.h` (throws using `boost::format`, kept per above), 
+       `Log.cpp/.h` (trivial `iostream`-based logging, no heavy deps).
+     - `FileHandle.cpp/.h` / `FileUtil.cpp/.h`: only needed if the JS API
+       should also support save/load to/from the wasm virtual filesystem
+       (`.dat`/`.json` on disk) rather than always working purely on
+       in-memory buffers — **not yet decided**, leaning toward skipping
+       these for a pure buffer-in/buffer-out API and revisiting if a
+       file-based mode turns out to be useful.
+   - **Confirmed excluded, with the concrete reason found in the source**:
+     `DurationCalculator`, `FileFormat` (`boost::to_lower_copy`, CLI format
+     string parsing), `GdImageRenderer` (`libgd`, PNG rendering),
+     `Options`/`OptionHandler` (`boost::program_options`/`filesystem`, CLI
+     orchestration — note `OptionHandler.cpp` is also where the *real*
+     `createAudioFileReader()` → `WaveformGenerator` → `buffer.write(...)`
+     pipeline is wired today; this repo's Embind wrapper needs to
+     reimplement that wiring itself, not reuse `OptionHandler`),
+     `ProgressReporter`/`TimeUtil` (CLI progress display), `Rgba`/
+     `WaveformColors` (rendering colors), `WavFileWriter` (a CLI debug
+     feature, dumps raw PCM to `.wav`), `AudioLoader` (only used by
+     `OptionHandler`'s `--auto` amplitude-scaling special case — a
+     legitimate feature, but not essential for v1; revisit as a v2 if the
+     auto-scale behavior turns out to matter for the player UI).
 
 ## Current status
 
@@ -78,10 +162,14 @@ extraction, no Dockerfile, no build pipeline yet.
 
 **Not yet done / open questions:**
 
-- Read `audiowaveform`'s actual source tree to confirm the boost
-  dependency scope of the core (decision 4) before assuming it's
-  CLI-only.
+- ~~Read `audiowaveform`'s actual source tree to confirm the boost
+  dependency scope of the core~~ — done, see decision 8.
 - Decide MP3-only vs. multi-format (libsndfile) for v1.
+- Decide whether the JS API needs file-based `.dat`/`.json` save/load
+  (`FileHandle`/`FileUtil`) or purely in-memory buffers (decision 8's
+  last bullet).
+- Double-check `pdjson`'s license before vendoring (decision 8) — not yet
+  confirmed, though it's a small, widely-reused JSON library.
 - Design the actual Embind API surface (function names, options shape,
   return shape matching `waveform-data.js`'s expected format).
 - Repo/package naming: this repo is `audiowaveform-wasm-compiler`
