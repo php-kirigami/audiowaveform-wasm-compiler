@@ -428,38 +428,155 @@ Decisions settled with the user (2026-09-12):
     output directly, no `-s EXPORT_ES6` build flag needed on the emcc
     side).
 
+16. **First real end-to-end build succeeded, extensively runtime-tested
+    against real audio and real tags, and the API surface evolved based on
+    what that testing found (2026-09-12).** User said "Allons-y pour
+    docker" once disk space recovered (a cleanup brought `C:` from 6.6GB
+    to 26.4GB free); `make base-image` → `libmad` → `libid3tag` →
+    `libsndfile` → `audiowaveform-wasm` all eventually succeeded, each
+    hitting a real bug fixed in its own commit rather than guessed at:
+    - **`.gitattributes` added**: this machine's system-wide
+      `core.autocrlf=true` (Git for Windows default) was converting
+      checked-out Dockerfiles to CRLF, corrupting bash heredocs (a literal
+      `\r` landed inside a `git clone <url>` string, "Malformed input to a
+      URL function"). Forced `* text=auto eol=lf` and re-checked-out every
+      file.
+    - **libmad/libid3tag**: bundled 2004-era `config.sub` didn't recognize
+      `wasm32-unknown-emscripten` — fixed with a real, verified patch
+      (`patches/libmad,libid3tag/config.sub-wasm32-emscripten.patch`,
+      replacing it with a modern 2022 upstream copy), per the user's
+      explicit instruction mid-session to patch rather than silently
+      overwrite vendored files. Separately, both projects' `configure.ac`
+      has a hand-written arg-parsing loop that traps a bare `-O2` (or
+      autoconf's own unset-`CFLAGS` "-g -O2" default) into a set of
+      GCC-specific 1990s optimization flags clang/emcc rejects outright —
+      fixed with `CFLAGS="-DNDEBUG"` (deliberately not `-O2`, which
+      re-triggers the exact same trap — an early attempt at this exact fix
+      backfired for that reason). FPM_DEFAULT (portable fixed-point math,
+      not x86/ARM asm) confirmed correctly selected, resolving decision
+      7's original open risk.
+    - **libid3tag also needed `libz` vendored** (`compile/libz/Dockerfile`,
+      plain `emconfigure`/`emmake`, no JSPI machinery needed): its
+      `configure` hard-requires `zlib.h` with no `--without-zlib` escape
+      hatch. Not needed at first (the internal skip-past-the-tag path
+      never touched it) — became necessary once `getId3Tags()`/
+      `getId3CoverArt()` (below) pulled in different object files whose
+      `util.o` calls `uncompress()`.
+    - **Final `em++` link, several real bugs in sequence**: `boost/
+      format.hpp` not found (emcc's cross sysroot doesn't see host
+      headers by default, even though `libboost-dev` genuinely installs
+      it) — fixed with `-idirafter /usr/include`, not `-isystem` (a first
+      attempt with `-isystem` overcorrected and made `<cassert>` resolve
+      to the HOST's real glibc `assert.h`, which then failed on a
+      multiarch-subdirectory header); `madlld`'s `bstdfile.c`/`pdjson.c`
+      compiled as C++ by `em++` regardless of extension, producing mangled
+      symbols their own `extern "C"`-wrapping headers didn't expect
+      (`undefined symbol: NewBstdFile`) — fixed by compiling those two
+      files separately with real `emcc -c` first (a same-invocation
+      positional `-x c` was tried first and made em++'s per-file clang++
+      re-invocation apply `-x c` to unrelated `.cpp` files too);
+      `output_stream`/`error_stream` (declared but only ever defined in
+      the excluded `Main.cpp`) needed real definitions in `binding.cpp`;
+      `/root/out` didn't exist yet for `-o`.
+    - **A genuine runtime crash, not a build failure — the most
+      significant find of the session**: the first successful build
+      crashed the instant `WaveformGenerator::init()` wrote its first
+      line (`RuntimeError: table index is out of bounds`, later `memory
+      access out of bounds` after an unrelated change — the varying crash
+      site was itself a clue). Root-caused with a temporary `-g` debug
+      build for real symbol names, not guessed: Emscripten's **default
+      wasm stack is 64KB**, too small for libc++'s chained `ostream
+      operator<<`/`sentry` call depth. Fixed with `-s STACK_SIZE=5MB`.
+      `output_stream`/`error_stream` were also redirected to a null
+      `std::ostream` (not `std::cout`/`std::cerr`) — not load-bearing for
+      the crash once the stack was fixed, kept anyway as a deliberate
+      design choice (a library shouldn't silently print CLI-style text to
+      the embedding process's real stdout).
+    - **Real, working artifact produced and verified**: `node-builds/
+      audiowaveform.wasm` (~640KB) + `audiowaveform.js`. Smoke-tested with
+      real audio, not just "the build exited 0": `audiowaveform`'s own
+      bundled `test/data/*.mp3`/`.wav` fixtures first, then a proper
+      **format support matrix** — a real FLAC album (user-provided,
+      `assets/`, gitignored) re-encoded via `ffmpeg` to WAV (16/24-bit
+      PCM, 32-bit float), AIFF, MP3, Ogg Vorbis, Opus, and M4A/AAC.
+    - **`extractMp3Peaks`/`extractWavPeaks` unified into one
+      `extractAudioPeaks()`**, per the user's request, so callers don't
+      need to know the format up front. **Two real false-positive bugs
+      found and fixed in sequence while doing this**, both caught by
+      *rerunning the format matrix test* immediately after each change
+      rather than assuming the rename was safe: (1) a naive
+      try-MP3-then-fall-back-on-failure dispatch let FLAC/Ogg/Opus/M4A
+      "succeed" through `Mp3AudioFileReader` with a bogus 0Hz/zero-length
+      result, because libmad's frame-sync scanner can find a handful of
+      coincidentally-valid-looking sync words in essentially any
+      high-entropy binary blob without treating that as a decode error;
+      (2) a `buffer.getSize() == 0` heuristic (the first fix attempt)
+      still weren't sufficient — some inputs decoded a handful of real
+      garbage points, not exactly zero. **Fixed properly** with
+      `detectFormat()`: sniff real container magic bytes (`RIFF`/`FORM` →
+      libsndfile; `fLaC`/`OggS`/`....ftyp` → known-unsupported, fail
+      immediately; anything else → try `Mp3AudioFileReader`) instead of
+      any decode-attempt-based heuristic. Confirmed via the format matrix
+      afterward: MP3/WAV/AIFF all pass with correct point counts,
+      FLAC/Ogg/Opus/M4A all cleanly return `null`, no false positives left.
+    - **`getId3Tags()`/`getId3CoverArt()` added**, per the user's request
+      once `libid3tag` was confirmed vendored — `audiowaveform` itself
+      only ever uses `libid3tag` internally to skip past tags before
+      decoding, never to read values, so this is new code using
+      `libid3tag`'s own public API directly (`id3_file_open`,
+      `id3_tag_findframe`, `id3_frame_field`, `id3_field_getstrings`/
+      `getlatin1`/`getbinarydata`, `id3_ucs4_utf8duplicate`). Frame field
+      layouts (text-info frames' field 1 = STRINGLIST; `APIC`'s field
+      1/2/4 = MIME/picture-type/binary data) confirmed by reading
+      `libid3tag`'s own `frametype.c`, not guessed. Cover art returned as
+      a plain byte-value array rather than a `typed_memory_view`, since
+      the underlying bytes don't outlive `id3_file_close()`.
+    - **User raised a real concern before testing**: `libid3tag` is a
+      dead, 2004-era library — could it handle modern ID3v2.4/UTF-16
+      correctly? Rather than swap to a heavier library (TagLib) on
+      spec, tested empirically first, per this project's whole
+      methodology. Result, genuinely reassuring: **25 real, randomly-
+      sampled tagged MP3s** from the user's own library (title/artist/
+      album/year/track/genre/cover art) — 0 failures, 0 crashes, correct
+      UTF-8 output including French accents (Angélique, Fête). Then a
+      **second, deliberately adversarial batch** generated with `ffmpeg`:
+      explicit ID3v2.3 vs. ID3v2.4 (both parse, `TYER`/`TDRC` fallback
+      confirmed working), ID3v1-only (no v2 at all — confirmed
+      `id3_file_tag()` genuinely handles both, including resolving the
+      numeric ID3v1 genre byte to text), a very long title (no
+      truncation), a numeric-style `TCON` genre (`"17"`, not resolved to
+      a name — a known, minor, undocumented-until-now limitation, not a
+      crash), and — the real test of the user's UTF-16 concern — a title
+      mixing Japanese, an emoji, French accents, and Cyrillic in one
+      string, which came through byte-for-byte correct. **Conclusion:
+      `libid3tag` is good enough as-is; no need to vendor a heavier tag
+      library for now.**
+
 ## Current status
 
-**Scaffolding + a full, unbuilt Docker/Emscripten pipeline, now with
-version tracking (2026-09-12).** Created while `php-wasm-compiler`'s build
-pipeline runs (on and off) in parallel, per the user's request to start
-this project in the meantime — and, once that concurrent build revealed
-this machine only has 8.6GB free on `C:` (decision 11), deliberately kept
-to *authoring* (Dockerfiles, Makefile, the Embind wrapper, a real
-generated-and-verified patch, `matrix.json` + its version-checking
-scripts) rather than *running* anything build-heavy, to avoid competing
-for disk/RAM with the PHP build. The two pure-Node scripts
-(`matrix-version.mjs`, `update-lib-versions.mjs`) are the one exception —
-network + local file I/O only, no Docker/disk cost, and both have actually
-been run and verified working (decision 14). Repo initialized and pushed
-to `https://github.com/php-kirigami/audiowaveform-wasm-compiler`; `LICENSE`
-(GPL-3.0), this file, `README.md` (rewritten to follow the Kirigami
-ecosystem's README convention — logo, badges, Table of contents — per the
-user's request), the full `compile/` pipeline (decisions 12-13), and
-`matrix.json` (decision 14) are all in place.
+**Builds and runs (2026-09-12).** `make audiowaveform-wasm` produces a
+real, working `node-builds/audiowaveform.wasm` (~640KB) +
+`audiowaveform.js`, exporting `extractAudioPeaks(bytes, samplesPerPixel)`,
+`getId3Tags(mp3Bytes)`, and `getId3CoverArt(mp3Bytes)`. All three are
+extensively runtime-tested (decision 16), not just built: the format
+matrix (MP3/WAV-16/24/float/AIFF pass, FLAC/Ogg/Opus/M4A cleanly `null`),
+25 real tagged MP3s from the user's own library (peaks + tags + cover
+art, 0 failures/crashes), and a deliberately adversarial ID3 batch
+(ID3v2.3, ID3v2.4, ID3v1-only, unicode/emoji/Cyrillic, long strings,
+numeric genre codes). Repo pushed to
+`https://github.com/php-kirigami/audiowaveform-wasm-compiler`.
 
 **Not yet done / open questions:**
 
-- Run the actual build for the first time once `php-wasm-compiler`'s
-  build finishes and disk headroom is confirmed again (decision 11) —
-  resolves every "not yet verified" flag left in decisions 12-13's
-  Dockerfiles (libmad's FPM selection, libid3tag/zlib, the full link step).
+- ~~Run the actual build for the first time~~ — done, see decision 16 for
+  the full debugging history (config.sub, CFLAGS, libz, boost headers,
+  C/C++ mangling, missing stream globals, the stack-size crash).
 - ~~Read `audiowaveform`'s actual source tree to confirm the boost
   dependency scope of the core~~ — done, see decision 8.
 - ~~Decide MP3-only vs. multi-format (libsndfile) for v1~~ — resolved by
   decision 9 (MP3 primary) and **wired in** by decision 13 (`libsndfile`
-  Dockerfile + Makefile target + `extractWavPeaks()` in `binding.cpp`,
-  WAV/AIFF/RAW only — FLAC/Ogg/Opus deferred, see decision 9's correction).
+  Dockerfile + Makefile target, WAV/AIFF/RAW only — FLAC/Ogg/Opus
+  deferred, see decision 9's correction).
 - ~~Decide whether the JS API needs file-based save/load~~ — resolved by
   decision 10 (buffer-only for v1).
 - ~~Track dependency + `audiowaveform` versions like `php-wasm-compiler`~~
@@ -469,17 +586,21 @@ user's request), the full `compile/` pipeline (decisions 12-13), and
   (decision 9's correction #2): `libfaad2` + its own bundled `mp4read.c`
   demuxer (both GPL-2/3-or-later, unlike the originally-considered
   `libfdk-aac` which is very likely GPL-incompatible). No
-  `compile/libfaad2/Dockerfile` written yet.
+  `compile/libfaad2/Dockerfile` written yet. Real magic-byte detection for
+  it (`ftyp` box) is already in place in `detectFormat()` (decision 16),
+  currently just returning `null` — wiring in a real decoder later is
+  additive, not a redesign.
 - ~~Double-check `pdjson`'s license~~ — confirmed Unlicense (public domain,
   a real `UNLICENSE` file ships in `audiowaveform`'s `src/pdjson/`),
   GPL-3.0-compatible, no concern.
-- ~~Design the actual Embind API surface~~ — `extractMp3Peaks()` and
-  `extractWavPeaks()` exist in decision 12/13's `binding.cpp`, but both are
-  untested and likely to need real API-shape iteration once actually
-  compiled and exercised from Node (parameter names, whether
-  `PixelsPerSecondScaleFactor` should be exposed as an alternative to
-  `samplesPerPixel`, whether `WaveformRescaler` should be a separate bound
-  function, etc.).
+- ~~Design the actual Embind API surface~~ — `extractAudioPeaks()`,
+  `getId3Tags()`, `getId3CoverArt()` all exist, built, and extensively
+  tested (decision 16). Still open: whether `PixelsPerSecondScaleFactor`
+  should be exposed as an alternative to `samplesPerPixel`, whether
+  `WaveformRescaler` should be a separate bound function, and resolving
+  numeric-only `TCON` genre codes (e.g. `"17"`) to their text name via
+  `id3_genre_name()` — found as a real, minor gap during decision 16's
+  adversarial ID3 testing, not yet fixed.
 - Repo/package naming: this repo is `audiowaveform-wasm-compiler`
   (matching `php-wasm-compiler`'s naming pattern); the published npm
   package name is not yet decided (candidate: `@kirigami/audiowaveform-wasm`).

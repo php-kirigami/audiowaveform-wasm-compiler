@@ -80,8 +80,9 @@ const peaks = module.extractAudioPeaks(mp3Bytes, 512);
 // { version: 2, channels: 2, sample_rate: 44100, samples_per_pixel: 512,
 //   bits: 16, length: 1234, data: [...] }
 
-// Same function for WAV/AIFF/RAW — format is auto-detected, tries MP3
-// first then falls back to libsndfile.
+// Same function for WAV/AIFF/RAW — format is auto-detected by sniffing
+// real container magic bytes (RIFF/FORM -> libsndfile; fLaC/OggS/ftyp ->
+// not supported yet, returns null; anything else -> MP3).
 const wavPeaks = module.extractAudioPeaks(fs.readFileSync('song.wav'), 512);
 
 // ID3 tag metadata and embedded cover art (MP3 only):
@@ -114,7 +115,18 @@ Tested 2026-09-12 against real audio — a FLAC album re-encoded to each format 
 
 `extractAudioPeaks()` returns `null` for unsupported formats — never crashes.
 
-Unsupported formats fail cleanly (the function returns `null`), never crash.
+### ID3 tag support
+
+`getId3Tags()`/`getId3CoverArt()` tested against 25 real, randomly-sampled tagged MP3s (0 failures/crashes) plus a deliberately adversarial batch generated with `ffmpeg`:
+
+| Case | Status | Notes |
+| --- | --- | --- |
+| ID3v2.3 | ✅ Works | |
+| ID3v2.4 | ✅ Works | `year` tries `TDRC` (v2.4) then falls back to `TYER` (v2.3) |
+| ID3v1-only (no v2 tag) | ✅ Works | numeric genre byte correctly resolved to text |
+| Unicode (Japanese, emoji, Cyrillic, French accents mixed in one string) | ✅ Works | |
+| Very long strings | ✅ Works | no truncation |
+| Numeric-style `TCON` genre (e.g. `"17"`) | ⚠️ Partial | returned as the raw string, not resolved to a genre name via `id3_genre_name()` — a known, minor gap |
 
 ---
 
