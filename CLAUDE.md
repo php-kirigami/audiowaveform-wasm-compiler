@@ -793,6 +793,53 @@ Decisions settled with the user (2026-09-12):
       already-vendored `libvorbis`/`libopus`); `audiowaveform-wasm`'s
       prerequisites and final `em++` link line gained it accordingly.
 
+20. **MP3 CBR/VBR compatibility matrix run deliberately (2026-09-12) — the
+    README's existing MP3 claim was accurate but too thin** (user: "c'est
+    pas bien indiqué dans le readme, il faudrait tester avec des mp3 vbr
+    cbr pis toute le kit"). The 25-real-file test from decision 16 was a
+    random sample of whatever encodings those files happened to use, not a
+    deliberate sweep of encoding modes — this decision fills that gap with
+    16 `ffmpeg -c:a libmp3lame`-generated files (60s clips from the same
+    real FLAC album used elsewhere, plus one full-length track) covering:
+    CBR 64/128/192/256/320kbps, VBR q0/q4/q9 (best/mid/worst LAME quality),
+    mono at both CBR and VBR, sample rates 48000/22050/16000Hz (22050 and
+    16000 force LAME into MPEG2 Layer III framing, half-size frames vs. the
+    default MPEG1 — a real framing-format difference, not just a number
+    change), a full-length (~6.5min) VBR file (not just short clips), a
+    CBR file with `-write_xing 0` (no Xing/LAME VBR header frame — some
+    strict/old encoders omit it; a decoder that assumes it exists can
+    misdetect the header frame as audio), and explicit non-joint ("simple")
+    stereo vs. LAME's joint-stereo default. All 16 decoded correctly
+    (real, non-zero peaks; peaks.length within 10% of the
+    duration/sample_rate/samples_per_pixel-derived expectation for every
+    case). **Real, previously-undocumented API behavior found while writing
+    the test** (not a bug — traced to `binding.cpp`'s
+    `WaveformGenerator processor(buffer, false, scaleFactor)`, the
+    `split_channels = false` argument, matching `audiowaveform`'s own CLI
+    default): `extractAudioPeaks()` always returns `channels: 1` in the
+    output peaks object, even for stereo (or 5.1, if that ever came up)
+    input — the reader downmixes to one merged waveform by design, it
+    never surfaces a per-channel `channels` count reflecting the source
+    file. First noticed as 13 "failures" in this very test (every stereo
+    fixture reporting `channels: 1`) before being traced to this
+    intentional design choice rather than a decode bug — confirmed by
+    reading `binding.cpp`'s own comment: "split_channels = false: emit one
+    merged waveform, not one per channel — the common case for a player
+    UI." This was already true for every format this project supports, not
+    MP3-specific — just never exercised by a test that checked the
+    `channels` field against the *source* file's channel count until now.
+    Documented in `README.md`'s Usage section (a code comment on the
+    `peaks.channels` line) and a new note in the Format support table,
+    since a consumer expecting `channels` to mirror the source stereo/mono-
+    ness would otherwise be surprised. `README.md`'s Format support table
+    also gained an explicit "MP3 encoding modes tested" sub-list (this
+    decision's 16 cases) so MP3 support reads as verified-in-depth rather
+    than a single ✅ row — closing the user's "not well indicated" complaint
+    without inflating the claim (VBR/CBR was always expected to work, given
+    `libmad` decodes standard MPEG audio frames regardless of how the
+    encoder chose bitrates, but now it's actually demonstrated instead of
+    assumed).
+
 ## Current status
 
 **Builds, runs, and is published (2026-09-12).** `make audiowaveform-wasm`

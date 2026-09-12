@@ -24,7 +24,8 @@ Builds a waveform-peak-extraction module for the **[Kirigami](https://github.com
 - ✅ **Node.js** only, no browser target
 - ✅ One monolithic wasm module — no JSPI, no Asyncify, no dylink side-modules (peak extraction is synchronous, CPU-bound work)
 - ✅ Buffer in, JS object out — output shaped like `audiowaveform`'s own documented peaks format, so [`waveform-data.js`](https://github.com/bbc/waveform-data.js) can consume it directly
-- ✅ MP3 (`libmad` + `libid3tag`), WAV/AIFF/RAW/FLAC/Ogg-Vorbis/Ogg-Opus (`libsndfile` + `libFLAC`/`libogg`/`libvorbis`/`libopus`), M4A/AAC (`libfaad2` — not `libfdk-aac`, which is very likely GPL-incompatible), and WebM (Vorbis/Opus audio, via Mozilla's `nestegg` demuxer)
+- ✅ **MP3, fully verified** (`libmad` + `libid3tag`) — both CBR and VBR, every common bitrate/quality level, mono and stereo, MPEG1 and MPEG2 sample rates, with and without a Xing/LAME VBR header; see [Format support](#format-support) for the full 16-case matrix
+- ✅ WAV/AIFF/RAW/FLAC/Ogg-Vorbis/Ogg-Opus (`libsndfile` + `libFLAC`/`libogg`/`libvorbis`/`libopus`), M4A/AAC (`libfaad2` — not `libfdk-aac`, which is very likely GPL-incompatible), and WebM (Vorbis/Opus audio, via Mozilla's `nestegg` demuxer)
 - ❌ No CLI, no image rendering — that's `audiowaveform`'s own job, and JS's job on the consuming side
 
 See [`CLAUDE.md`](CLAUDE.md) for the full architecture and decision history.
@@ -77,8 +78,12 @@ const module = await createModule();
 const mp3Bytes = fs.readFileSync('song.mp3');
 
 const peaks = module.extractAudioPeaks(mp3Bytes, 512);
-// { version: 2, channels: 2, sample_rate: 44100, samples_per_pixel: 512,
+// { version: 2, channels: 1, sample_rate: 44100, samples_per_pixel: 512,
 //   bits: 16, length: 1234, data: [...] }
+// Note: `channels` is always 1 — stereo (or any multichannel) input is
+// downmixed into one merged waveform, matching audiowaveform's own CLI
+// default (`split_channels=false`). It does not reflect the source
+// file's real channel count.
 
 // Same function for WAV/AIFF/FLAC/Ogg-Vorbis/Ogg-Opus/M4A-AAC/WebM — format
 // is auto-detected by sniffing real container magic bytes (RIFF/FORM/fLaC/
@@ -104,7 +109,7 @@ Tested 2026-09-12 against real audio — a FLAC album re-encoded to each format 
 
 | Format | Status | Notes |
 | --- | --- | --- |
-| MP3 | ✅ Works | `libmad` + `libid3tag`; peaks, tags, and cover art all verified against 25 real files (0 failures, 0 crashes) |
+| MP3 | ✅ Works | `libmad` + `libid3tag`; peaks, tags, and cover art all verified against 25 real files (0 failures, 0 crashes) **plus a deliberate 16-case CBR/VBR encoding matrix** (see below) — both encoding modes, every common bitrate/quality, mono/stereo, MPEG1/MPEG2 sample rates |
 | WAV (16-bit PCM) | ✅ Works | |
 | WAV (24-bit PCM) | ✅ Works | |
 | WAV (32-bit float) | ✅ Works | |
@@ -116,6 +121,28 @@ Tested 2026-09-12 against real audio — a FLAC album re-encoded to each format 
 | WebM (Vorbis or Opus audio) | ✅ Works | Mozilla's `nestegg` demuxes the container, decoding reuses `libvorbis`/`libopus` (already vendored for Ogg support) via this project's own `WebmAudioFileReader` — verified against a full 6+ minute real track, not just a short clip |
 
 `extractAudioPeaks()` returns `null` for unsupported formats — never crashes.
+
+### MP3 encoding modes tested
+
+Beyond the 25 real-world files above, tested 2026-09-12 against a deliberate
+16-file matrix generated with `ffmpeg`/`libmp3lame` from a real FLAC track
+(60s clips, plus one full-length file), to confirm CBR *and* VBR both work
+across the range real-world encoders produce — not just whatever encoding
+the sample files happened to use:
+
+| Case | Status |
+| --- | --- |
+| CBR 64 / 128 / 192 / 256 / 320 kbps | ✅ Works |
+| VBR quality 0 (best, ~245kbps) / 4 (~165kbps) / 9 (worst, ~65kbps) | ✅ Works |
+| Mono, CBR and VBR | ✅ Works |
+| 48000 Hz (MPEG1 framing) | ✅ Works |
+| 22050 Hz / 16000 Hz (MPEG2 framing — half-size frames vs. MPEG1) | ✅ Works |
+| Full-length file (~6.5 min), VBR | ✅ Works |
+| No Xing/LAME VBR header frame (`-write_xing 0`) | ✅ Works |
+| Simple (non-joint) stereo vs. LAME's joint-stereo default | ✅ Works |
+
+Every case produced real, non-zero peak data with a peak count matching
+the file's actual duration. 16/16 passed, 0 failures.
 
 ### ID3 tag support
 
