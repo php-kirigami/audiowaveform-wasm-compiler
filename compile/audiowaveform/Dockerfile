@@ -82,16 +82,27 @@ RUN source /root/emsdk/emsdk_env.sh && \
 # failed to resolve an #include — so emcc's own libc headers still win,
 # and only `boost/*` (which doesn't exist in emcc's sysroot at all) falls
 # through to the host path.
+#
+# -s STACK_SIZE=5MB: Emscripten's default (64KB) is too small for the call
+# depth libc++'s chained ostream operator<< / sentry machinery needs —
+# confirmed as the actual root cause (not a std::cout-specific bug, our
+# first hypothesis — see src/binding.cpp's nullStream comment) of a real
+# runtime crash on the first smoke test: WaveformGenerator::init()'s
+# `log(Info) << "..." << someInt << ...` calls corrupted memory deep in
+# iostream internals, manifesting as either "table index is out of
+# bounds" or "memory access out of bounds" depending on build details —
+# classic stack-overflow symptoms (varying crash site, not a consistent
+# logic bug). 5MB is generous headroom, not a tuned minimum.
 RUN source /root/emsdk/emsdk_env.sh && \
     em++ \
         -O2 \
-        -g \
         -std=c++11 \
         -I src \
         -I /root/lib/include \
         -idirafter /usr/include \
         -s ENVIRONMENT=node \
         -s ALLOW_MEMORY_GROWTH=1 \
+        -s STACK_SIZE=5MB \
         -s MODULARIZE=1 \
         -s EXPORT_NAME=createAudiowaveformModule \
         -lembind \

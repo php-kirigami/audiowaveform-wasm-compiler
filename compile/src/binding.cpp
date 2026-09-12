@@ -26,21 +26,19 @@ namespace {
 // A trivial discard-everything streambuf/ostream pair, used below instead
 // of std::cout/std::cerr.
 //
-// CONFIRMED BUG (2026-09-12, found via the first real runtime smoke test,
-// not guessed): routing output_stream at std::cout triggers a genuine
-// crash — `RuntimeError: table index is out of bounds` inside
-// Emscripten's own libc++ stdout streambuf implementation
-// (`std::__2::__stdoutbuf<char>::sync()` calling into
-// `std::__2::codecvt<...>::unshift()`), reached the moment
-// WaveformGenerator::init() writes its first line to `output_stream`.
-// Never chased further than confirming std::cout itself is the trigger —
-// this project has no use for that CLI-style info/progress text anyway
-// (it's a programmatic Node API, not a terminal tool), so the practical
-// fix is to not construct/touch std::cout's real stdout streambuf at all,
-// rather than debug Emscripten's iostream/locale internals for output we
-// don't want. error_stream gets the same treatment for consistency (and
-// because std::cerr shares enough machinery with std::cout that it's not
-// obviously safe either, untested).
+// Originally added chasing what looked like a std::cout-specific bug
+// (routing output_stream at std::cout crashed with `RuntimeError: table
+// index is out of bounds` inside Emscripten's libc++ stdout streambuf).
+// The REAL root cause, found right after: this build's default wasm stack
+// (Emscripten's default STACK_SIZE, 64KB) is too small for the call depth
+// libc++'s chained `operator<<` / `ostream::sentry` machinery needs —
+// confirmed by adding `-s STACK_SIZE=5MB` in ../audiowaveform/Dockerfile,
+// which made writes to a plain std::cout-backed stream work fine too. So
+// this null-stream redirect isn't load-bearing for correctness anymore —
+// kept anyway as a deliberate design choice: a library function silently
+// writing CLI-style "Generating waveform data..." text to the embedding
+// Node process's real stdout/stderr would be surprising, unwanted
+// behavior for a programmatic API, regardless of whether it also crashes.
 class NullStreamBuf : public std::streambuf {
     protected:
         int overflow(int c) override { return c; }
