@@ -5,6 +5,10 @@ node_modules/
 /node-builds/
 /output/
 
+# Local test audio (real music files, not ours to redistribute) — user-
+# provided for smoke-testing, never committed.
+/assets/
+
 # Compiled third-party libraries (rebuilt via `make`, not committed)
 compile/*/dist/
 compile/base-image/.ready

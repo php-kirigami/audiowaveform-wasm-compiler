@@ -21,14 +21,43 @@
 
 using namespace emscripten;
 
+namespace {
+
+// A trivial discard-everything streambuf/ostream pair, used below instead
+// of std::cout/std::cerr.
+//
+// CONFIRMED BUG (2026-09-12, found via the first real runtime smoke test,
+// not guessed): routing output_stream at std::cout triggers a genuine
+// crash — `RuntimeError: table index is out of bounds` inside
+// Emscripten's own libc++ stdout streambuf implementation
+// (`std::__2::__stdoutbuf<char>::sync()` calling into
+// `std::__2::codecvt<...>::unshift()`), reached the moment
+// WaveformGenerator::init() writes its first line to `output_stream`.
+// Never chased further than confirming std::cout itself is the trigger —
+// this project has no use for that CLI-style info/progress text anyway
+// (it's a programmatic Node API, not a terminal tool), so the practical
+// fix is to not construct/touch std::cout's real stdout streambuf at all,
+// rather than debug Emscripten's iostream/locale internals for output we
+// don't want. error_stream gets the same treatment for consistency (and
+// because std::cerr shares enough machinery with std::cout that it's not
+// obviously safe either, untested).
+class NullStreamBuf : public std::streambuf {
+    protected:
+        int overflow(int c) override { return c; }
+};
+
+NullStreamBuf nullStreamBuf;
+std::ostream nullStream(&nullStreamBuf);
+
+} // namespace
+
 // Streams.h only declares these `extern`; audiowaveform's own Main.cpp
 // (excluded from this build, decision 4) is normally what defines them.
 // Log.cpp needs a real definition to link since it's part of the extracted
 // core (decision 13 — required by SndFileAudioFileReader's ProgressReporter
-// dependency chain). std::cerr for errors is enough for a wasm module with
-// no CLI-style stdout waveform-info printing.
-std::ostream& output_stream = std::cout;
-std::ostream& error_stream = std::cerr;
+// dependency chain).
+std::ostream& output_stream = nullStream;
+std::ostream& error_stream = nullStream;
 
 namespace {
 

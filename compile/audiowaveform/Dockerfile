@@ -85,6 +85,7 @@ RUN source /root/emsdk/emsdk_env.sh && \
 RUN source /root/emsdk/emsdk_env.sh && \
     em++ \
         -O2 \
+        -g \
         -std=c++11 \
         -I src \
         -I /root/lib/include \
