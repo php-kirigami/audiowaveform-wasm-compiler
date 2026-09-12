@@ -93,6 +93,23 @@ RUN source /root/emsdk/emsdk_env.sh && \
 # bounds" or "memory access out of bounds" depending on build details —
 # classic stack-overflow symptoms (varying crash site, not a consistent
 # logic bug). 5MB is generous headroom, not a tuned minimum.
+#
+# -s EXPORT_ES6=1: without it, Emscripten's MODULARIZE output is a UMD-
+# style file (a `module.exports = factory` branch, no real `export`
+# syntax) — Node's CJS/ESM interop maps that to `import().default` only
+# when the file itself is resolved as CommonJS. That's implicit and
+# fragile: found the hard way when copying this output into
+# @kirigami/audiowaveform-wasm (a real `"type": "module"` package) made
+# Node treat the vendored dist/audiowaveform.js as ESM too (no controlling
+# package.json says otherwise inside that package), so the UMD branch
+# never ran and `import().default` came back `undefined`
+# ("TypeError: createModule is not a function") — whereas the same file
+# loaded fine from this repo's own node-builds/ (no package.json in the
+# tree at all, so Node defaults to CJS). EXPORT_ES6 makes Emscripten emit
+# a real `export default` instead, so it works correctly regardless of
+# the consuming package's own module type — matches this project's ESM
+# convention (decision 15) properly instead of relying on Node's
+# extension-based guessing.
 RUN source /root/emsdk/emsdk_env.sh && \
     em++ \
         -O2 \
@@ -104,6 +121,7 @@ RUN source /root/emsdk/emsdk_env.sh && \
         -s ALLOW_MEMORY_GROWTH=1 \
         -s STACK_SIZE=5MB \
         -s MODULARIZE=1 \
+        -s EXPORT_ES6=1 \
         -s EXPORT_NAME=createAudiowaveformModule \
         -lembind \
         src/binding.cpp \
