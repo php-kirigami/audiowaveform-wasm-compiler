@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+/node-builds/
+/output/
+
+# Compiled third-party libraries (rebuilt via `make`, not committed)
+compile/*/dist/
+compile/base-image/.ready
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
