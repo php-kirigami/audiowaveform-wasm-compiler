@@ -1,0 +1,57 @@
+--- a/src/MathUtil.cpp	2026-09-12 06:29:05.758238300 -0400
++++ b/src/MathUtil.cpp	2026-09-12 06:29:05.768779600 -0400
+@@ -23,8 +23,6 @@
+ 
+ #include "MathUtil.h"
+ 
+-#include <boost/regex.hpp>
+-
+ #include <cassert>
+ #include <cmath>
+ 
+@@ -75,37 +73,14 @@
+ 
+ //------------------------------------------------------------------------------
+ 
+-std::pair<bool, double> parseNumber(const std::string& value)
+-{
+-    static const boost::regex regex(
+-        "^"          // Anchor to beginning of string
+-        "[\\+\\-]?"  // Optionally, either a '+' or a '-'
+-        "\\d*"       // Zero or more digits
+-        "(\\.\\d*)?" // Optionally, a '.' followed by zero or more digits
+-        "$"          // Anchor to end of string
+-    );
+-
+-    double number = 0.0;
+-    bool success;
+-
+-    boost::smatch match;
+-
+-    if (boost::regex_match(value, match, regex)) {
+-        try {
+-            number = std::stod(value);
+-
+-            success = true;
+-        }
+-        catch (const std::exception& e) {
+-            success = false;
+-        }
+-    }
+-    else {
+-        success = false;
+-    }
+-
+-    return std::make_pair(success, number);
+-}
++// parseNumber() (CLI --start/--end numeric argument parsing, the only
++// caller being Options.cpp) was removed by this patch: it was the sole
++// reason this file depended on boost::regex, a compiled Boost component
++// this project's extracted core has no other use for and does not
++// cross-compile to wasm. See audiowaveform-wasm-compiler's CLAUDE.md
++// decision 8. MathUtil.h's declaration is left in place (harmless, and
++// avoids touching a second file) — nothing in the extracted core calls
++// it, so it needs no definition.
+ 
+ //------------------------------------------------------------------------------
+ 

@@ -131,12 +131,15 @@ Decisions settled with the user (2026-09-12):
        exactly one caller and it's CLI-only.
      - `Error.cpp/.h` (throws using `boost::format`, kept per above), 
        `Log.cpp/.h` (trivial `iostream`-based logging, no heavy deps).
-     - `FileHandle.cpp/.h` / `FileUtil.cpp/.h`: only needed if the JS API
-       should also support save/load to/from the wasm virtual filesystem
-       (`.dat`/`.json` on disk) rather than always working purely on
-       in-memory buffers — **not yet decided**, leaning toward skipping
-       these for a pure buffer-in/buffer-out API and revisiting if a
-       file-based mode turns out to be useful.
+     - `FileHandle.cpp/.h`: **correction, found while writing the actual
+       Embind wrapper (decision 12) — this one is required, not optional.**
+       `Mp3AudioFileReader.h` itself `#include`s it and holds a `FileHandle
+       file_` member; it's not just an output-side save/load helper the
+       way this decision originally assumed. Trivial file either way (a
+       plain RAII `FILE*` wrapper, no boost, no heavy deps) — just wrong
+       to have called it skippable. `FileUtil.cpp/.h` remains genuinely
+       optional (only relevant for file-based `.dat`/`.json` save/load,
+       decision 10 skips that for v1).
    - **Confirmed excluded, with the concrete reason found in the source**:
      `DurationCalculator`, `FileFormat` (`boost::to_lower_copy`, CLI format
      string parsing), `GdImageRenderer` (`libgd`, PNG rendering),
@@ -152,35 +155,201 @@ Decisions settled with the user (2026-09-12):
      legitimate feature, but not essential for v1; revisit as a v2 if the
      auto-scale behavior turns out to matter for the player UI).
 
+9. **v1 format scope: MP3 (primary) + WAV/FLAC/Ogg/Opus via `libsndfile`
+   (since it's already part of the extracted core's `AudioFileReader`
+   family at no extra architectural cost); M4A/AAC deferred to v2
+   (2026-09-12).** User asked whether M4A support was possible. Checked
+   the actual source: `audiowaveform` has **no** M4A/AAC support anywhere
+   — not in its own code, not via `libsndfile` (which covers WAV/AIFF/
+   FLAC/Ogg-Vorbis/Opus, but not the MP4 container or the AAC codec). This
+   isn't "flip a flag," it's a genuinely new decoder path. Two realistic
+   options identified: **FFmpeg** (`libavformat`+`libavcodec` — decodes
+   everything, including AAC/MP4, but is by far the heaviest possible
+   dependency to cross-compile here, a project-sized undertaking on its
+   own — see `ffmpeg.wasm` for prior art that it's *possible*, not that
+   it's *cheap*) vs. **`libfdk-aac`** (a standalone AAC decoder) **+ a
+   small single-header MP4 demuxer** (e.g. `minimp4.h`-style, just to pull
+   the raw AAC elementary stream out of the `.m4a` box structure) — much
+   more in line with this pipeline's "one targeted lib at a time" style
+   (`libssh2`, `nghttp2`, `libsodium` in the `php-wasm-compiler` cousin
+   project were all added this same way). **Decision: defer M4A to v2**,
+   but keep `AudioFileReader` as the extension point (decision 8's file
+   list already treats it as an abstract base with per-format
+   subclasses) so adding `M4aAudioFileReader` later is additive, not a
+   redesign. Not yet started: no `libfdk-aac`/MP4-demuxer research beyond
+   naming the two candidate approaches.
+10. **JS API will be buffer-in/buffer-out only for v1 — no file-based
+    `.dat`/`.json` save/load.** Resolves decision 8's last open bullet:
+    skip `FileHandle.cpp`/`FileUtil.cpp` from the extracted core. Simpler,
+    and fits a Node API better than routing through the wasm virtual
+    filesystem; revisit if a file-based mode turns out to be genuinely
+    useful later.
+11. **Deliberately not running any `docker build`/`make` yet, even though
+    the Dockerfiles/Makefile below got written (2026-09-12).** Checked
+    free disk space on `C:` before starting this work:  only **8.6GB
+    free** — the exact danger zone `php-wasm-compiler`'s own CLAUDE.md
+    documents ("below a couple GB free, Windows itself starts failing in
+    confusing ways") — and `php-wasm-compiler`'s own PHP build is running
+    concurrently on this same machine, presumably itself consuming
+    disk/RAM. Starting a second heavy Emscripten/Docker build right now
+    (pulling `ubuntu:noble` + emsdk again, compiling `libmad`/`libid3tag`)
+    risks reproducing tonight's earlier disk-space crisis (see
+    `php-wasm-compiler/CLAUDE.md`'s Environment section) across *two*
+    concurrent builds instead of one. So: author the build pipeline now
+    (zero disk/RAM cost), actually run it once the PHP build finishes and
+    disk headroom is confirmed again.
+12. **Full build pipeline authored (not yet run) while blocked on disk
+    space by decision 11 (2026-09-12): `compile/base-image/Dockerfile`,
+    `compile/libmad/Dockerfile`, `compile/libid3tag/Dockerfile`,
+    `compile/audiowaveform/Dockerfile`, `compile/Makefile`, and the actual
+    Embind wrapper `compile/src/binding.cpp`.**
+    - Deliberately **not** the full `config.yaml`/`matrix.json`/`cli.mjs`
+      apparatus `php-wasm-compiler` has — that machinery earns its keep
+      there because of a real matrix (dozens of extensions × PHP
+      versions). This project has two fixed-version, dead-upstream libs
+      (`libmad`/`libid3tag`, both pinned `0.15.1b` — confirmed via
+      `gh api repos/markjeee/libmad` that no real GitHub tags exist to
+      track "latest" against, unlike `audiowaveform` itself, which does
+      have real tags, latest `1.10.3` per `gh api
+      repos/bbc/audiowaveform/tags`, pinned in the Makefile) and one
+      purpose-built final module — that whole apparatus would be
+      premature abstraction here. Revisit if the lib/format count grows
+      enough to justify it (e.g. once M4A's `libfdk-aac` and `libsndfile`
+      both get added).
+    - `base-image/Dockerfile`: `php-wasm-compiler`'s base image trimmed of
+      everything JSPI/side-module-specific (no `emcc-for-php-wasm.sh`
+      patching — decision 3, this is a plain monolithic module, not a
+      dylink `MAIN_MODULE`), same Emscripten `4.0.19` pin (no strong
+      reason to diverge), plus `libboost-dev` (decision 8's header-only
+      `boost::format`).
+    - `libmad/Dockerfile` / `libid3tag/Dockerfile`: standard
+      `emconfigure`/`emmake` autotools cross-compile, `--host
+      wasm32-unknown-emscripten`, sourced from the SourceForge "mad"
+      project (the actual canonical, if long-dead, upstream). Two
+      concrete unverified risk areas flagged **as comments in the
+      Dockerfiles themselves**, since neither can be checked without an
+      actual build (decision 11): (a) libmad's `fixed.h` selects a
+      fixed-point math implementation partly via hand-written per-
+      architecture inline assembly (`FPM_INTEL`/`FPM_ARM`/etc.) — this
+      project does *not* pass a `-D__x86_64__`-style arch-spoofing flag
+      (unlike `php-wasm-compiler`'s SIMD-intrinsics libs, see that repo's
+      decision 32 for why that flag exists there), so plain autoconf
+      host-triplet detection should fall through to the portable
+      `FPM_DEFAULT` path — confirm this is actually what gets selected at
+      the first real build; (b) libid3tag optionally links zlib for
+      compressed-ID3v2-frame support, and this project doesn't vendor
+      `libz` yet — confirm whether that's a soft (skippable) or hard
+      configure dependency before assuming the build succeeds unmodified.
+    - `audiowaveform/Dockerfile`: downloads `audiowaveform`'s real GitHub
+      release tarball fresh (not a committed vendored copy — same
+      "download at build time, patch via a real `.patch` file" pattern
+      `php-wasm-compiler` settled on for `cmark`, decision 34, not the
+      "vendor + hand-edit" false start that decision made and reverted for
+      the same reason), applies `patches/audiowaveform/no-boost-regex.patch`
+      via `git apply --no-index` (exact same invocation
+      `php-wasm-compiler/compile/php/Dockerfile` uses), then compiles the
+      confirmed core file list (decision 8, corrected) plus
+      `src/binding.cpp` with `em++ -lembind`, linked against the
+      `libmad`/`libid3tag` `.a` files staged in via `COPY --from=`
+      referencing those two images by tag (built separately by the
+      Makefile, not a Dockerfile multi-stage `FROM`).
+    - `patches/audiowaveform/no-boost-regex.patch`: a **real, generated
+      and verified** patch (not just described) — removes `MathUtil.cpp`'s
+      `parseNumber()` and its `#include <boost/regex.hpp>` (decision 8's
+      "trimmed" `MathUtil.cpp` was previously just a stated intent; this
+      is the actual mechanism). Verified applying cleanly with both
+      `patch -p1 --dry-run` and `git apply --check` against a pristine
+      checkout of `audiowaveform`'s real `MathUtil.cpp` (cloned to a
+      scratchpad for this purpose) before being committed — same
+      verification discipline `php-wasm-compiler` decision 34 used for its
+      `cmark` patch. One real snag hit and fixed while generating it: the
+      first diff attempt failed to apply (`patch`) / warned (`git apply`)
+      due to CRLF line endings introduced by this being authored on
+      Windows against a `git clone` that itself checked out CRLF (this
+      machine's `core.autocrlf`) — fixed by normalizing both sides to LF
+      with `dos2unix` before diffing, since the real build target (a
+      fresh download inside a Linux container) will have native LF.
+    - `compile/src/binding.cpp`: exposes `extractMp3Peaks(bytes,
+      samplesPerPixel) -> object` via Embind. Written directly from
+      reading `AudioFileReader.h`/`Mp3AudioFileReader.h`/
+      `WaveformGenerator.h`/`WaveformBuffer.h`'s real interfaces (not
+      guessed), reimplementing the shape of
+      `OptionHandler::generateWaveformData()`'s pipeline
+      (`open()` → `WaveformGenerator` as `AudioProcessor` → `run()`) without
+      any of `OptionHandler`'s CLI machinery. Key design point: every
+      `AudioFileReader` subclass in `audiowaveform` reads from a real file
+      path, not a memory buffer, so the incoming JS `Uint8Array` gets
+      staged into Emscripten's default in-memory MEMFS at a fixed temp
+      path before calling `Mp3AudioFileReader::open()` unmodified —
+      keeps this wrapper a thin adapter rather than requiring changes to
+      `audiowaveform`'s own reader code. Returns a plain JS object shaped
+      like `audiowaveform`'s own documented JSON peaks format
+      (`version`/`channels`/`sample_rate`/`samples_per_pixel`/`bits`/
+      `length`/`data`) rather than a serialized string, so callers get
+      real typed data without a `JSON.parse()` round-trip; `JSON.stringify()`
+      on the result reconstructs the literal file format.
+    - **None of this has been compiled yet** (decision 11) — every risk
+      area called out above is a documented hypothesis to verify at the
+      first real `make`/`docker build`, not a confirmed working build the
+      way `php-wasm-compiler`'s equivalent decisions are.
+
 ## Current status
 
-**Scaffolding only (2026-09-12).** Created while `php-wasm-compiler`'s
-build pipeline runs in parallel, per the user's request to start this
-project in the meantime. So far: repo initialized, `LICENSE` (GPL-3.0,
-fetched via `gh api licenses/gpl-3.0`), this file, `README.md`. No source
-extraction, no Dockerfile, no build pipeline yet.
+**Scaffolding + a full, unbuilt Docker/Emscripten pipeline (2026-09-12).**
+Created while `php-wasm-compiler`'s build pipeline runs in parallel, per
+the user's request to start this project in the meantime — and, once that
+concurrent build revealed this machine only has 8.6GB free on `C:`
+(decision 11), deliberately kept to *authoring* (Dockerfiles, Makefile,
+the Embind wrapper, a real generated-and-verified patch) rather than
+*running* anything, to avoid competing for disk/RAM with the PHP build.
+Repo initialized, `LICENSE` (GPL-3.0), this file, `README.md`, and the
+full `compile/` pipeline described in decision 12. GitHub remote not yet
+created — see the note below.
 
 **Not yet done / open questions:**
 
+- Run the actual build for the first time once `php-wasm-compiler`'s
+  build finishes and disk headroom is confirmed again (decision 11) —
+  resolves every "not yet verified" flag left in decision 12's Dockerfiles
+  (libmad's FPM selection, libid3tag/zlib, the full link step).
 - ~~Read `audiowaveform`'s actual source tree to confirm the boost
   dependency scope of the core~~ — done, see decision 8.
-- Decide MP3-only vs. multi-format (libsndfile) for v1.
-- Decide whether the JS API needs file-based `.dat`/`.json` save/load
-  (`FileHandle`/`FileUtil`) or purely in-memory buffers (decision 8's
-  last bullet).
+- ~~Decide MP3-only vs. multi-format (libsndfile) for v1~~ — resolved by
+  decision 9 (MP3 primary; `libsndfile` formats included in the core file
+  list but **not yet wired into the Makefile/Dockerfiles** — only
+  `libmad`/`libid3tag` have actual build plumbing so far, `SndFileAudioFileReader`
+  wiring is still a TODO, not done despite decision 9's framing).
+- ~~Decide whether the JS API needs file-based save/load~~ — resolved by
+  decision 10 (buffer-only for v1).
+- M4A/AAC support (decision 9) — still deferred to v2, no `libfdk-aac`/MP4
+  demuxer work started.
 - Double-check `pdjson`'s license before vendoring (decision 8) — not yet
   confirmed, though it's a small, widely-reused JSON library.
-- Design the actual Embind API surface (function names, options shape,
-  return shape matching `waveform-data.js`'s expected format).
+- ~~Design the actual Embind API surface~~ — a first version exists,
+  `extractMp3Peaks()` in decision 12's `binding.cpp`, but it's untested
+  and likely to need real API-shape iteration once actually compiled and
+  exercised from Node (parameter names, whether `PixelsPerSecondScaleFactor`
+  should be exposed as an alternative to `samplesPerPixel`, whether
+  `WaveformRescaler` should be a separate bound function, etc.).
 - Repo/package naming: this repo is `audiowaveform-wasm-compiler`
   (matching `php-wasm-compiler`'s naming pattern); the published npm
   package name is not yet decided (candidate: `@kirigami/audiowaveform-wasm`).
-- GitHub remote: not yet created. `php-wasm-compiler`/`kirigami`/
-  `kiribuild` all live under the `php-kirigami` GitHub org — presumably
-  this repo would too, but the remote hasn't been created or confirmed
-  with the user yet.
-- No Docker base-image / Makefile / CLI scaffolding yet — the plan is to
-  mirror `php-wasm-compiler`'s structure (`compile/base-image/`,
-  `compile/<lib>/Dockerfile` per third-party lib, `compile/Makefile`,
-  `compile/cli.mjs`) where it makes sense, adapted for the simpler
-  single-module (no JSPI/dylink) build.
+- GitHub remote: **not created yet, blocked** — Claude Code's own
+  auto-mode classifier refuses `gh repo create` for a new *public* repo
+  ("Create Public Surface"), even though the target
+  (`php-kirigami/audiowaveform-wasm-compiler`, same org as
+  `php-wasm-compiler`/`kirigami`/`kiribuild`, confirmed via `gh api
+  user/orgs` — there is no separate "Kirigami" org) is correct and the
+  user asked for it twice. User offered to create the empty repo
+  themselves (2026-09-12); once it exists, this session still needs to
+  `git remote add origin` + push the local commits.
+- No `compile/cli.mjs`-equivalent entry point yet — decision 12
+  deliberately skipped that whole apparatus for now (two fixed-version
+  libs, no config matrix to drive). The Makefile is invoked directly
+  (`make audiowaveform-wasm`) rather than through a Node CLI wrapper.
+  Revisit once/if the project's scope (M4A, multi-format, a real "latest"
+  checker for `audiowaveform` itself) grows enough to justify one.
+- `libsndfile` (decision 9's WAV/FLAC/Ogg/Opus support) has no
+  `compile/libsndfile/Dockerfile` and isn't wired into the Makefile or
+  `audiowaveform/Dockerfile`'s em++ command yet — only the MP3 path
+  (`libmad`/`libid3tag`) has real build plumbing so far.
