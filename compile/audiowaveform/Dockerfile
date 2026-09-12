@@ -128,4 +128,15 @@ RUN source /root/emsdk/emsdk_env.sh && \
         /root/lib/lib/libmad.a \
         /root/lib/lib/libid3tag.a \
         /root/lib/lib/libsndfile.a \
+        /root/lib/lib/libz.a \
         -o /root/out/audiowaveform.js
+# libz.a: confirmed necessary once binding.cpp started calling into
+# libid3tag's real tag-reading API (id3_tag_findframe/id3_frame_field/...,
+# getId3Tags()/getId3CoverArt()) rather than only the internal
+# skip-past-the-tag path audiowaveform's own Mp3AudioFileReader uses —
+# pulled in a different set of libid3tag.a's object files, one of which
+# (util.o) references zlib's uncompress() (used for ID3v2's rarely-hit
+# compressed-frame support). Already present at /root/lib/lib/libz.a
+# (copied in transitively via the libid3tag build stage, which vendors it
+# for the same reason — see compile/libid3tag/Dockerfile) — just wasn't
+# on this link line until it was actually needed.
